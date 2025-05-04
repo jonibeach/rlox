@@ -49,6 +49,14 @@ impl Lexer {
                         add_and_unset_prev(Token::BangEqual);
                         continue;
                     }
+                    (Some(Token::Less), '=') => {
+                        add_and_unset_prev(Token::LessEqual);
+                        continue;
+                    }
+                    (Some(Token::Greater), '=') => {
+                        add_and_unset_prev(Token::GreaterEqual);
+                        continue;
+                    }
                     (Some(prev), ..) => add_and_unset_prev(prev),
                     (None, ..) => {}
                 };
@@ -67,6 +75,8 @@ impl Lexer {
                     ';' => Token::Semicolon,
                     '=' => Token::Equal,
                     '!' => Token::Bang,
+                    '<' => Token::Less,
+                    '>' => Token::Greater,
                     invalid => {
                         add_error(invalid);
                         continue;
@@ -110,7 +120,7 @@ impl Display for Symbol<Error> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Token {
     LeftParen,
     RightParen,
@@ -127,6 +137,10 @@ pub enum Token {
     EqualEqual,
     Bang,
     BangEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 }
 
 impl Into<&'static str> for &Token {
@@ -147,6 +161,10 @@ impl Into<&'static str> for &Token {
             Token::EqualEqual => "==",
             Token::Bang => "!",
             Token::BangEqual => "!=",
+            Token::Less => "<",
+            Token::LessEqual => "<=",
+            Token::Greater => ">",
+            Token::GreaterEqual => ">=",
         }
     }
 }
@@ -169,6 +187,10 @@ impl Token {
             Self::EqualEqual => "EQUAL_EQUAL",
             Self::Bang => "BANG",
             Self::BangEqual => "BANG_EQUAL",
+            Self::Less => "LESS",
+            Self::LessEqual => "LESS_EQUAL",
+            Self::Greater => "GREATER",
+            Self::GreaterEqual => "GREATER_EQUAL",
         }
     }
 }
