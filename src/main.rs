@@ -5,6 +5,9 @@ use std::io::{self, Write};
 enum Token {
     LeftParen,
     RightParen,
+
+    LeftBrace,
+    RightBrace
 }
 
 impl Token {
@@ -12,12 +15,18 @@ impl Token {
         match self {
             Self::LeftParen => '(',
             Self::RightParen => ')',
+
+            Self::LeftBrace => '{',
+            Self::RightBrace => '}'
         }
     }
     fn display(&self) -> &'static str {
         match self {
             Self::LeftParen => "LEFT_PAREN",
             Self::RightParen => "RIGHT_PAREN",
+            
+            Self::LeftBrace => "LEFT_BRACE",
+            Self::RightBrace => "RIGhT_BRACE"
         }
     }
 }
@@ -48,6 +57,8 @@ fn main() {
                 let token = match c {
                     '(' => Token::LeftParen,
                     ')' => Token::RightParen,
+                    '{' => Token::LeftBrace,
+                    '}' => Token::RightBrace,
                     _ => panic!("Unknown token '{c}'"),
                 };
 
