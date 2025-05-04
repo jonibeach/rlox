@@ -34,16 +34,22 @@ impl Lexer {
             };
 
             for c in line_contents.as_ref().chars() {
-                match (self.prev_token, c) {
+                let curr_prev_token = self.prev_token.clone();
+                let mut add_and_unset_prev = |inner: Token| {
+                    add_token(inner);
+                    self.prev_token = None;
+                };
+
+                match (curr_prev_token, c) {
                     (Some(Token::Equal), '=') => {
-                        add_token(Token::EqualEqual);
-                        self.prev_token = None;
+                        add_and_unset_prev(Token::EqualEqual);
                         continue;
                     }
-                    (Some(prev), ..) => {
-                        add_token(prev);
-                        self.prev_token = None;
+                    (Some(Token::Bang), '=') => {
+                        add_and_unset_prev(Token::BangEqual);
+                        continue;
                     }
+                    (Some(prev), ..) => add_and_unset_prev(prev),
                     (None, ..) => {}
                 };
 
@@ -60,6 +66,7 @@ impl Lexer {
                     '.' => Token::Dot,
                     ';' => Token::Semicolon,
                     '=' => Token::Equal,
+                    '!' => Token::Bang,
                     invalid => {
                         add_error(invalid);
                         continue;
@@ -118,6 +125,8 @@ pub enum Token {
     Semicolon,
     Equal,
     EqualEqual,
+    Bang,
+    BangEqual,
 }
 
 impl Into<&'static str> for &Token {
@@ -136,6 +145,8 @@ impl Into<&'static str> for &Token {
             Token::Semicolon => ";",
             Token::Equal => "=",
             Token::EqualEqual => "==",
+            Token::Bang => "!",
+            Token::BangEqual => "!=",
         }
     }
 }
@@ -145,21 +156,19 @@ impl Token {
         match self {
             Self::LeftParen => "LEFT_PAREN",
             Self::RightParen => "RIGHT_PAREN",
-
             Self::LeftBrace => "LEFT_BRACE",
             Self::RightBrace => "RIGHT_BRACE",
-
             Self::Minus => "MINUS",
             Self::Plus => "PLUS",
             Self::Slash => "SLASH",
             Self::Star => "STAR",
-
             Self::Comma => "COMMA",
             Self::Dot => "DOT",
             Self::Semicolon => "SEMICOLON",
-
             Self::Equal => "EQUAL",
             Self::EqualEqual => "EQUAL_EQUAL",
+            Self::Bang => "BANG",
+            Self::BangEqual => "BANG_EQUAL",
         }
     }
 }
