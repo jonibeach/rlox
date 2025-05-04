@@ -126,9 +126,6 @@ fn main() -> Result<(), String> {
 
     match command.as_str() {
         "tokenize" => {
-            // You can use print statements as follows for debugging, they'll be visible when running tests.
-            writeln!(io::stderr(), "Logs from your program will appear here!").unwrap();
-
             let file_contents = fs::read_to_string(filename).unwrap_or_else(|_| {
                 writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
                 String::new()
@@ -145,8 +142,10 @@ fn main() -> Result<(), String> {
                 }
             }
 
-            for err in symbols.iter().filter(|s| s.kind.is_err()) {
-                println!("{err}")
+            let errors: Vec<_> = symbols.iter().filter(|s| s.kind.is_err()).collect();
+
+            for err in &errors  {
+                eprintln!("{err}")
             }
 
             for token in symbols.iter().filter(|s| !s.kind.is_err()) {
@@ -154,6 +153,10 @@ fn main() -> Result<(), String> {
             }
 
             println!("EOF  null");
+
+            if errors.len() > 0 {
+                std::process::exit(65)
+            }
         }
         _ => {
             writeln!(io::stderr(), "Unknown command: {}", command).unwrap();
