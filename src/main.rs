@@ -2,9 +2,8 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 
-use lexer::Lexer;
+use codecrafters_interpreter::lexer::Lexer;
 
-pub mod lexer;
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {

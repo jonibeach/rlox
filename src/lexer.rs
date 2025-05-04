@@ -25,45 +25,66 @@ impl Lexer {
 
     pub fn lex(&mut self, lines: impl IntoIterator<Item = impl AsRef<str>>) {
         'lines: for (line, line_contents) in lines.into_iter().enumerate() {
-            let mut add_token = |inner: Token| self.tokens.push(Symbol { line, inner });
-            let mut add_error = |c: char| {
-                self.errors.push(Symbol {
-                    line,
-                    inner: Error(c),
-                })
-            };
-
-            for c in line_contents.as_ref().chars() {
-                // Take a clone here so we can get a mutable reference in the 'add_and_unset_prev' closure
-                let curr_prev_token = self.prev_token.clone();
-                let mut add_and_unset_prev = |inner: Token| {
-                    add_token(inner);
+            macro_rules! unset_prev {
+                () => {
+                    eprintln!("unsetting prev_token, was {:?}", self.prev_token);
                     self.prev_token = None;
                 };
+            }
+            macro_rules! add_token {
+                ($inner:path) => {
+                    eprintln!("adding token {:?}", $inner);
+                    self.tokens.push(Symbol {
+                        line,
+                        inner: $inner,
+                    });
+                };
+            }
 
-                match (curr_prev_token, c) {
+            macro_rules! add_error {
+                ($c:ident) => {
+                    self.errors.push(Symbol {
+                        line,
+                        inner: Error($c),
+                    });
+                    unset_prev!();
+                };
+            }
+
+            for c in line_contents.as_ref().chars() {
+                eprintln!("next char {c}");
+                macro_rules! add_and_unset_prev {
+                    ($inner:path) => {
+                        add_token!($inner);
+                        unset_prev!();
+                    };
+                }
+
+                match (self.prev_token, c) {
                     (Some(Token::Equal), '=') => {
-                        add_and_unset_prev(Token::EqualEqual);
+                        add_and_unset_prev!(Token::EqualEqual);
                         continue;
                     }
                     (Some(Token::Bang), '=') => {
-                        add_and_unset_prev(Token::BangEqual);
+                        add_and_unset_prev!(Token::BangEqual);
                         continue;
                     }
                     (Some(Token::Less), '=') => {
-                        add_and_unset_prev(Token::LessEqual);
+                        add_and_unset_prev!(Token::LessEqual);
                         continue;
                     }
                     (Some(Token::Greater), '=') => {
-                        add_and_unset_prev(Token::GreaterEqual);
+                        add_and_unset_prev!(Token::GreaterEqual);
                         continue;
                     }
                     // Handle comments by skipping to the next line
                     (Some(Token::Slash), '/') => {
-                        self.prev_token = None;
+                        unset_prev!();
                         continue 'lines;
                     }
-                    (Some(prev), ..) => add_and_unset_prev(prev),
+                    (Some(prev), ..) => {
+                        add_and_unset_prev!(prev);
+                    }
                     (None, ..) => {}
                 };
 
@@ -83,27 +104,43 @@ impl Lexer {
                     '!' => Token::Bang,
                     '<' => Token::Less,
                     '>' => Token::Greater,
+                    c if c.is_whitespace() => {
+                        eprintln!("skipping whitespace");
+                        unset_prev!();
+                        continue;
+                    }
                     invalid => {
-                        add_error(invalid);
+                        add_error!(invalid);
                         continue;
                     }
                 };
+
+                eprintln!("setting prev_token to {:?}", new_prev_token);
 
                 self.prev_token = Some(new_prev_token);
             }
 
             if let Some(prev) = self.prev_token {
-                add_token(prev)
+                add_token!(prev);
+                unset_prev!();
             }
         }
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Error(char);
 
+#[derive(Debug, PartialEq)]
 pub struct Symbol<T> {
     line: usize,
     inner: T,
+}
+
+impl<T> Symbol<T> {
+    pub fn new(line: usize, inner: T) -> Self {
+        Self { line, inner }
+    }
 }
 
 impl Display for Symbol<Token> {
@@ -126,7 +163,7 @@ impl Display for Symbol<Error> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Token {
     LeftParen,
     RightParen,
