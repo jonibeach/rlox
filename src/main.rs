@@ -1,6 +1,41 @@
 use std::env;
+use std::fmt::Display;
 use std::fs;
 use std::io::{self, Write};
+
+struct Symbol {
+    line: usize,
+    kind: SymbolKind,
+}
+
+impl Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            SymbolKind::Token(t) => f.write_fmt(format_args!(
+                "{} {} null",
+                t.display(),
+                Into::<char>::into(&t)
+            )),
+            SymbolKind::Error(c) => f.write_fmt(format_args!(
+                "[line {}] Error: Unexpected character: {c}",
+                self.line + 1
+            )),
+        }
+    }
+}
+
+enum SymbolKind {
+    Token(Token),
+    Error(char),
+}
+impl SymbolKind {
+    fn is_err(&self) -> bool {
+        match self {
+            Self::Error(..) => true,
+            Self::Token(..) => false,
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 enum Token {
@@ -22,15 +57,12 @@ enum Token {
 
 macro_rules! impl_conversions {
     ($($i:path=$c:literal,)*) => {
-        impl TryFrom<char> for Token {
-            type Error = String;
-            fn try_from(value: char) -> Result<Self, Self::Error> {
-                let token = match value {
-                    $($c => $i,)*
-                    invalid => return Err(format!("Invalid token '{invalid}'")),
-                };
-
-                Ok(token)
+        impl From<char> for SymbolKind {
+            fn from(value: char) -> Self {
+                match value {
+                    $($c => Self::Token($i),)*
+                    invalid => Self::Error(invalid),
+                }
             }
         }
 
@@ -44,7 +76,7 @@ macro_rules! impl_conversions {
     };
 }
 
-impl_conversions!{
+impl_conversions! {
     Token::LeftParen='(',
     Token::RightParen=')',
 
@@ -86,7 +118,7 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
         writeln!(io::stderr(), "Usage: {} tokenize <filename>", args[0]).unwrap();
-        return Ok(())
+        return Ok(());
     }
 
     let command = &args[1];
@@ -102,14 +134,23 @@ fn main() -> Result<(), String> {
                 String::new()
             });
 
-            let mut tokens = Vec::new();
+            let mut symbols = Vec::new();
 
-            for c in file_contents.chars() {
-                tokens.push(TryInto::<Token>::try_into(c)?);
+            for (line, line_contents) in file_contents.lines().into_iter().enumerate() {
+                for c in line_contents.chars() {
+                    symbols.push(Symbol {
+                        line,
+                        kind: c.into(),
+                    })
+                }
             }
 
-            for t in tokens {
-                println!("{} {} null", t.display(), Into::<char>::into(&t));
+            for err in symbols.iter().filter(|s| s.kind.is_err()) {
+                println!("{err}")
+            }
+
+            for token in symbols.iter().filter(|s| !s.kind.is_err()) {
+                println!("{token}")
             }
 
             println!("EOF  null");
