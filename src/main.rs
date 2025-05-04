@@ -26,7 +26,7 @@ impl Token {
             Self::RightParen => "RIGHT_PAREN",
             
             Self::LeftBrace => "LEFT_BRACE",
-            Self::RightBrace => "RIGhT_BRACE"
+            Self::RightBrace => "RIGHT_BRACE"
         }
     }
 }
