@@ -24,7 +24,7 @@ impl Lexer {
     }
 
     pub fn lex(&mut self, lines: impl IntoIterator<Item = impl AsRef<str>>) {
-        for (line, line_contents) in lines.into_iter().enumerate() {
+        'lines: for (line, line_contents) in lines.into_iter().enumerate() {
             let mut add_token = |inner: Token| self.tokens.push(Symbol { line, inner });
             let mut add_error = |c: char| {
                 self.errors.push(Symbol {
@@ -34,6 +34,7 @@ impl Lexer {
             };
 
             for c in line_contents.as_ref().chars() {
+                // Take a clone here so we can get a mutable reference in the 'add_and_unset_prev' closure
                 let curr_prev_token = self.prev_token.clone();
                 let mut add_and_unset_prev = |inner: Token| {
                     add_token(inner);
@@ -56,6 +57,11 @@ impl Lexer {
                     (Some(Token::Greater), '=') => {
                         add_and_unset_prev(Token::GreaterEqual);
                         continue;
+                    }
+                    // Handle comments by skipping to the next line
+                    (Some(Token::Slash), '/') => {
+                        self.prev_token = None;
+                        continue 'lines;
                     }
                     (Some(prev), ..) => add_and_unset_prev(prev),
                     (None, ..) => {}
