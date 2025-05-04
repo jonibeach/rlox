@@ -8,6 +8,12 @@ enum Token {
 }
 
 impl Token {
+    fn as_char(&self) -> char {
+        match self {
+            Self::LeftParen => '(',
+            Self::RightParen => ')',
+        }
+    }
     fn display(&self) -> &'static str {
         match self {
             Self::LeftParen => "LEFT_PAREN",
@@ -42,14 +48,14 @@ fn main() {
                 let token = match c {
                     '(' => Token::LeftParen,
                     ')' => Token::RightParen,
-                    _ => panic!("Unknown token '{c}'")
+                    _ => panic!("Unknown token '{c}'"),
                 };
 
                 tokens.push(token);
             }
 
             for t in tokens {
-                println!("{} null", t.display());
+                println!("{} {} null", t.display(), t.as_char());
             }
 
             println!("EOF  null");
