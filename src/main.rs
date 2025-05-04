@@ -2,6 +2,20 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 
+enum Token {
+    LeftParen,
+    RightParen,
+}
+
+impl Token {
+    fn display(&self) -> &'static str {
+        match self {
+            Self::LeftParen => "LEFT_PAREN",
+            Self::RightParen => "RIGHT_PAREN",
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -22,11 +36,23 @@ fn main() {
                 String::new()
             });
 
-            if !file_contents.is_empty() {
-                panic!("Scanner not implemented");
-            } else {
-                println!("EOF  null"); // Placeholder, remove this line when implementing the scanner
+            let mut tokens = Vec::new();
+
+            for c in file_contents.chars() {
+                let token = match c {
+                    '(' => Token::LeftParen,
+                    ')' => Token::RightParen,
+                    _ => panic!("Unknown token '{c}'")
+                };
+
+                tokens.push(token);
             }
+
+            for t in tokens {
+                println!("{} null", t.display());
+            }
+
+            println!("EOF  null");
         }
         _ => {
             writeln!(io::stderr(), "Unknown command: {}", command).unwrap();
