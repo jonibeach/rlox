@@ -1,10 +1,14 @@
 use std::fmt::Display;
 
-use crate::lexer::{Keyword, Symbol, Token};
+use crate::{
+    lexer::{Keyword, Symbol, Token},
+    util::Number,
+};
 
 pub enum Ast {
     Bool(bool),
     Nil,
+    Number(Number),
 }
 
 impl Display for Ast {
@@ -12,6 +16,7 @@ impl Display for Ast {
         match self {
             Self::Bool(bool) => f.write_str(&bool.to_string()),
             Self::Nil => f.write_str("nil"),
+            Self::Number(n) => n.fmt(f),
         }
     }
 }
@@ -34,6 +39,7 @@ impl Parser {
                 Token::Keyword(Keyword::True) => Ast::Bool(true),
                 Token::Keyword(Keyword::False) => Ast::Bool(false),
                 Token::Keyword(Keyword::Nil) => Ast::Nil,
+                Token::Number(n, _) => Ast::Number(n),
                 _ => unimplemented!(),
             };
 

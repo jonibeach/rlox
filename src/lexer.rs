@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use crate::util::Number;
+
 #[derive(Default)]
 pub struct Lexer<'src> {
     errors: Vec<Symbol<Error>>,
@@ -321,7 +323,7 @@ pub enum Token<'src> {
     Greater,
     GreaterEqual,
     String(&'src str),
-    Number(f64, &'src str),
+    Number(Number, &'src str),
     Identifier(&'src str),
     Keyword(Keyword),
 }
@@ -329,11 +331,7 @@ pub enum Token<'src> {
 impl<'src> Token<'src> {
     fn literal(&self) -> String {
         if let Self::Number(n, _) = self {
-            return if n.fract() == 0.0 {
-                format!("{n}.0")
-            } else {
-                format!("{n}")
-            };
+            return format!("{n}");
         }
 
         match self {
