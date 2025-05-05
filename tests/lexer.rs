@@ -73,7 +73,7 @@ fn number() {
     lexer.lex(src);
     assert_eq!(
         lexer.tokens(),
-        [Symbol::new(0, Token::Number(123.14, "123.14"))].as_slice()
+        [Symbol::new(0, Token::Number(123.14.into(), "123.14"))].as_slice()
     );
     assert_eq!(lexer.errors(), [].as_slice())
 }
@@ -112,7 +112,7 @@ fn ident_2() {
         [
             Symbol::new(0, Token::Identifier("test")),
             Symbol::new(0, Token::Equal),
-            Symbol::new(0, Token::Number(123.123, "123.123"))
+            Symbol::new(0, Token::Number(123.123.into(), "123.123"))
         ]
         .as_slice()
     );
