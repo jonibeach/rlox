@@ -41,6 +41,56 @@ impl<'src> Lexer<'src> {
             }
 
             let next_token = match c {
+                '"' => {
+                    let start_idx = pos + 1;
+                    let mut end_idx = start_idx;
+                    loop {
+                        match chars.next() {
+                            Some((_, '"')) => {
+                                break Some(Token::String(&src[start_idx..end_idx]));
+                            }
+                            Some((_, c)) => {
+                                if c == '\n' {
+                                    line += 1;
+                                }
+
+                                end_idx += 1;
+                            }
+                            None => {
+                                add_error!(Error::UnterminatedString);
+                                break None;
+                            }
+                        }
+                    }
+                }
+                '0'..='9' => {
+                    let start_idx = pos;
+                    let mut end_idx = start_idx + 1;
+                    let mut matched_decimal_point = false;
+
+                    loop {
+                        let c = chars.peek();
+                        match (matched_decimal_point, c) {
+                            (false, Some((_, '0'..='9' | '.'))) | (true, Some((_, '0'..='9'))) => {
+                                let next = chars.next().unwrap();
+                                if next.1 == '.' {
+                                    matched_decimal_point = true;
+                                }
+                                end_idx += 1;
+                            }
+                            (true, Some((_, '.'))) => {
+                                add_error!(Error::UnexpectedCharacter(c.unwrap().1));
+                                chars.next().unwrap();
+                                break None;
+                            }
+                            _ => {
+                                let float_str_repr = &src[start_idx..end_idx];
+                                let float = float_str_repr.parse().unwrap();
+                                break Some(Token::Number(float, float_str_repr));
+                            }
+                        }
+                    }
+                }
                 '\n' => {
                     line += 1;
                     None
@@ -88,28 +138,6 @@ impl<'src> Lexer<'src> {
                 } else {
                     Token::Greater
                 }),
-                '"' => {
-                    let start_idx = pos + 1;
-                    let mut end_idx = start_idx;
-                    loop {
-                        match chars.next() {
-                            Some((_, '"')) => {
-                                break Some(Token::String(&src[start_idx..end_idx]));
-                            }
-                            Some((_, c)) => {
-                                if c == '\n' {
-                                    line += 1;
-                                }
-
-                                end_idx += 1;
-                            }
-                            None => {
-                                add_error!(Error::UnterminatedString);
-                                break None;
-                            }
-                        }
-                    }
-                }
                 c if c.is_whitespace() => None,
                 invalid => {
                     add_error!(Error::UnexpectedCharacter(invalid));
@@ -188,14 +216,25 @@ pub enum Token<'src> {
     Greater,
     GreaterEqual,
     String(&'src str),
+    Number(f64, &'src str),
 }
 
 impl<'src> Token<'src> {
-    fn literal(&self) -> &'src str {
+    fn literal(&self) -> String {
+        if let Self::Number(n, _) = self {
+            return if n.fract() == 0.0 {
+                format!("{n}.0")
+            } else {
+                format!("{n}")
+            };
+        }
+
         match self {
             Self::String(lit) => lit,
+            Self::Number(..) => unreachable!(),
             _ => "null",
         }
+        .to_string()
     }
     fn lexeme(&self) -> String {
         if let Self::String(s) = self {
@@ -222,7 +261,8 @@ impl<'src> Token<'src> {
             Self::LessEqual => "<=",
             Self::Greater => ">",
             Self::GreaterEqual => ">=",
-            Self::String(_) => unreachable!(),
+            Self::Number(_, lit) => lit,
+            Self::String(..) => unreachable!(),
         }
         .to_string()
     }
@@ -247,7 +287,8 @@ impl<'src> Token<'src> {
             Self::LessEqual => "LESS_EQUAL",
             Self::Greater => "GREATER",
             Self::GreaterEqual => "GREATER_EQUAL",
-            Self::String { .. } => "STRING",
+            Self::String(..) => "STRING",
+            Self::Number(..) => "NUMBER",
         }
     }
 }

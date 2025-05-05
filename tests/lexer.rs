@@ -66,3 +66,27 @@ fn ue7() {
         [Symbol::new(0, Token::String("hello")),].as_slice()
     );
 }
+
+#[test]
+fn number() {
+    let mut lexer = Lexer::new();
+    let src = "123.14";
+    lexer.lex(src);
+    assert_eq!(
+        lexer.tokens(),
+        [Symbol::new(0, Token::Number(123.14, "123.14"))].as_slice()
+    );
+    assert_eq!(lexer.errors(), [].as_slice())
+}
+
+// #[test]
+// fn number_invalid_amount_of_decimal_points() {
+//     let mut lexer = Lexer::new();
+//     let src = "123.14.1231";
+//     lexer.lex(src);
+//     assert_eq!(lexer.tokens(), [].as_slice());
+//     assert_eq!(
+//         lexer.errors(),
+//         [Symbol::new(0, LexerError::UnexpectedCharacter('.'))].as_slice()
+//     )
+// }
