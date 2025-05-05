@@ -194,6 +194,16 @@ impl Display for Symbol<Token<'_>> {
     }
 }
 
+impl<'src> Symbol<Token<'src>> {
+    pub fn token(&self) -> Token<'src> {
+        self.inner
+    }
+
+    pub fn line(&self) -> usize {
+        self.line
+    }
+}
+
 impl Display for Symbol<Error> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let differing_part = match self.inner {

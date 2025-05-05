@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 
 use codecrafters_interpreter::lexer::Lexer;
+use codecrafters_interpreter::parser::Parser;
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
@@ -13,17 +14,17 @@ fn main() -> Result<(), String> {
     let command = &args[1];
     let filename = &args[2];
 
+    let file_contents = fs::read_to_string(filename).unwrap_or_else(|_| {
+        eprintln!("Failed to read file {}", filename);
+        String::new()
+    });
+
+    let mut lexer = Lexer::new();
+
+    lexer.lex(&file_contents);
+
     match command.as_str() {
         "tokenize" => {
-            let file_contents = fs::read_to_string(filename).unwrap_or_else(|_| {
-                eprintln!("Failed to read file {}", filename);
-                String::new()
-            });
-
-            let mut lexer = Lexer::new();
-
-            lexer.lex(&file_contents);
-
             for err in lexer.errors() {
                 eprintln!("{err}")
             }
@@ -36,6 +37,14 @@ fn main() -> Result<(), String> {
 
             if !lexer.errors().is_empty() {
                 std::process::exit(65)
+            }
+        }
+        "parse" => {
+            let mut parser = Parser::new();
+            let ast = parser.parse(lexer.tokens());
+
+            for node in ast {
+                println!("{node}");
             }
         }
         _ => {
