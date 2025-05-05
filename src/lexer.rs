@@ -1,12 +1,12 @@
 use std::fmt::Display;
 
-pub struct Lexer {
+#[derive(Default)]
+pub struct Lexer<'src> {
     errors: Vec<Symbol<Error>>,
-    tokens: Vec<Symbol<Token>>,
-    prev_token: Option<Token>,
+    tokens: Vec<Symbol<Token<'src>>>,
 }
 
-impl Lexer {
+impl<'src> Lexer<'src> {
     pub fn errors(&self) -> &[Symbol<Error>] {
         &self.errors
     }
@@ -16,120 +16,121 @@ impl Lexer {
     }
 
     pub fn new() -> Self {
-        Self {
-            errors: Vec::new(),
-            tokens: Vec::new(),
-            prev_token: None,
-        }
+        Default::default()
     }
 
-    pub fn lex(&mut self, lines: impl IntoIterator<Item = impl AsRef<str>>) {
-        'lines: for (line, line_contents) in lines.into_iter().enumerate() {
-            macro_rules! unset_prev {
-                () => {
-                    eprintln!("unsetting prev_token, was {:?}", self.prev_token);
-                    self.prev_token = None;
-                };
-            }
-            macro_rules! add_token {
-                ($inner:path) => {
-                    eprintln!("adding token {:?}", $inner);
-                    self.tokens.push(Symbol {
-                        line,
-                        inner: $inner,
-                    });
-                };
+    pub fn lex(&mut self, src: &'src str) {
+        let mut line = 0;
+        let mut chars = src.char_indices().peekable();
+        let mut next = chars.next();
+
+        while let Some((pos, c)) = next {
+            if c == '\n' {
+                line += 1;
+                next = chars.next();
+                continue;
             }
 
             macro_rules! add_error {
-                ($c:ident) => {
+                ($inner: expr) => {
                     self.errors.push(Symbol {
                         line,
-                        inner: Error($c),
-                    });
-                    unset_prev!();
+                        inner: $inner,
+                    })
                 };
             }
 
-            for c in line_contents.as_ref().chars() {
-                eprintln!("next char {c}");
-                macro_rules! add_and_unset_prev {
-                    ($inner:path) => {
-                        add_token!($inner);
-                        unset_prev!();
-                    };
+            let next_token = match c {
+                '\n' => {
+                    line += 1;
+                    None
                 }
+                '(' => Some(Token::LeftParen),
+                ')' => Some(Token::RightParen),
+                '{' => Some(Token::LeftBrace),
+                '}' => Some(Token::RightBrace),
+                '-' => Some(Token::Minus),
+                '+' => Some(Token::Plus),
+                '/' => {
+                    if let Some((_, '/')) = chars.peek() {
+                        chars.find(|(_, c)| c == &'\n');
+                        line += 1;
+                        None
+                    } else {
+                        Some(Token::Slash)
+                    }
+                }
+                '*' => Some(Token::Star),
+                ',' => Some(Token::Comma),
+                '.' => Some(Token::Dot),
+                ';' => Some(Token::Semicolon),
+                '=' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::EqualEqual
+                } else {
+                    Token::Equal
+                }),
+                '!' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::BangEqual
+                } else {
+                    Token::Bang
+                }),
+                '<' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::LessEqual
+                } else {
+                    Token::Less
+                }),
+                '>' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::GreaterEqual
+                } else {
+                    Token::Greater
+                }),
+                '"' => {
+                    let start_idx = pos + 1;
+                    let mut end_idx = start_idx;
+                    loop {
+                        match chars.next() {
+                            Some((_, '"')) => {
+                                break Some(Token::String(&src[start_idx..end_idx]));
+                            }
+                            Some((_, c)) => {
+                                if c == '\n' {
+                                    line += 1;
+                                }
 
-                match (self.prev_token, c) {
-                    (Some(Token::Equal), '=') => {
-                        add_and_unset_prev!(Token::EqualEqual);
-                        continue;
+                                end_idx += 1;
+                            }
+                            None => {
+                                add_error!(Error::UnterminatedString);
+                                break None;
+                            }
+                        }
                     }
-                    (Some(Token::Bang), '=') => {
-                        add_and_unset_prev!(Token::BangEqual);
-                        continue;
-                    }
-                    (Some(Token::Less), '=') => {
-                        add_and_unset_prev!(Token::LessEqual);
-                        continue;
-                    }
-                    (Some(Token::Greater), '=') => {
-                        add_and_unset_prev!(Token::GreaterEqual);
-                        continue;
-                    }
-                    // Handle comments by skipping to the next line
-                    (Some(Token::Slash), '/') => {
-                        unset_prev!();
-                        continue 'lines;
-                    }
-                    (Some(prev), ..) => {
-                        add_and_unset_prev!(prev);
-                    }
-                    (None, ..) => {}
-                };
+                }
+                c if c.is_whitespace() => None,
+                invalid => {
+                    add_error!(Error::UnexpectedCharacter(invalid));
+                    None
+                }
+            };
 
-                let new_prev_token = match c {
-                    '(' => Token::LeftParen,
-                    ')' => Token::RightParen,
-                    '{' => Token::LeftBrace,
-                    '}' => Token::RightBrace,
-                    '-' => Token::Minus,
-                    '+' => Token::Plus,
-                    '/' => Token::Slash,
-                    '*' => Token::Star,
-                    ',' => Token::Comma,
-                    '.' => Token::Dot,
-                    ';' => Token::Semicolon,
-                    '=' => Token::Equal,
-                    '!' => Token::Bang,
-                    '<' => Token::Less,
-                    '>' => Token::Greater,
-                    c if c.is_whitespace() => {
-                        eprintln!("skipping whitespace");
-                        unset_prev!();
-                        continue;
-                    }
-                    invalid => {
-                        add_error!(invalid);
-                        continue;
-                    }
-                };
-
-                eprintln!("setting prev_token to {:?}", new_prev_token);
-
-                self.prev_token = Some(new_prev_token);
+            if let Some(next_token) = next_token {
+                self.tokens.push(Symbol::new(line, next_token));
             }
 
-            if let Some(prev) = self.prev_token {
-                add_token!(prev);
-                unset_prev!();
-            }
+            next = chars.next();
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Error(char);
+pub enum Error {
+    UnexpectedCharacter(char),
+    UnterminatedString,
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Symbol<T> {
@@ -143,28 +144,30 @@ impl<T> Symbol<T> {
     }
 }
 
-impl Display for Symbol<Token> {
+impl Display for Symbol<Token<'_>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "{} {} null",
-            self.inner.display(),
-            Into::<&str>::into(&self.inner)
-        ))
+        self.inner.fmt(f)
     }
 }
 
 impl Display for Symbol<Error> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let differing_part = match self.inner {
+            Error::UnexpectedCharacter(c) => {
+                format!("Unexpected character: {}", c)
+            }
+            Error::UnterminatedString => String::from("Unterminated string."),
+        };
+
         f.write_fmt(format_args!(
-            "[line {}] Error: Unexpected character: {}",
-            self.line + 1,
-            self.inner.0,
+            "[line {}] Error: {differing_part}",
+            self.line + 1
         ))
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Token {
+pub enum Token<'src> {
     LeftParen,
     RightParen,
     LeftBrace,
@@ -184,36 +187,46 @@ pub enum Token {
     LessEqual,
     Greater,
     GreaterEqual,
+    String(&'src str),
 }
 
-impl Into<&'static str> for &Token {
-    fn into(self) -> &'static str {
+impl<'src> Token<'src> {
+    fn literal(&self) -> &'src str {
         match self {
-            Token::LeftParen => "(",
-            Token::RightParen => ")",
-            Token::LeftBrace => "{",
-            Token::RightBrace => "}",
-            Token::Minus => "-",
-            Token::Plus => "+",
-            Token::Slash => "/",
-            Token::Star => "*",
-            Token::Comma => ",",
-            Token::Dot => ".",
-            Token::Semicolon => ";",
-            Token::Equal => "=",
-            Token::EqualEqual => "==",
-            Token::Bang => "!",
-            Token::BangEqual => "!=",
-            Token::Less => "<",
-            Token::LessEqual => "<=",
-            Token::Greater => ">",
-            Token::GreaterEqual => ">=",
+            Self::String(lit) => lit,
+            _ => "null",
         }
     }
-}
+    fn lexeme(&self) -> String {
+        if let Self::String(s) = self {
+            return format!("\"{s}\"");
+        }
 
-impl Token {
-    fn display(&self) -> &'static str {
+        match self {
+            Self::LeftParen => "(",
+            Self::RightParen => ")",
+            Self::LeftBrace => "{",
+            Self::RightBrace => "}",
+            Self::Minus => "-",
+            Self::Plus => "+",
+            Self::Slash => "/",
+            Self::Star => "*",
+            Self::Comma => ",",
+            Self::Dot => ".",
+            Self::Semicolon => ";",
+            Self::Equal => "=",
+            Self::EqualEqual => "==",
+            Self::Bang => "!",
+            Self::BangEqual => "!=",
+            Self::Less => "<",
+            Self::LessEqual => "<=",
+            Self::Greater => ">",
+            Self::GreaterEqual => ">=",
+            Self::String(_) => unreachable!(),
+        }
+        .to_string()
+    }
+    fn token_type(&self) -> &'static str {
         match self {
             Self::LeftParen => "LEFT_PAREN",
             Self::RightParen => "RIGHT_PAREN",
@@ -234,6 +247,18 @@ impl Token {
             Self::LessEqual => "LESS_EQUAL",
             Self::Greater => "GREATER",
             Self::GreaterEqual => "GREATER_EQUAL",
+            Self::String { .. } => "STRING",
         }
+    }
+}
+
+impl Display for Token<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{} {} {}",
+            self.token_type(),
+            self.lexeme(),
+            self.literal()
+        ))
     }
 }

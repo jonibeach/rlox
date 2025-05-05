@@ -1,13 +1,12 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
 
 use codecrafters_interpreter::lexer::Lexer;
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        writeln!(io::stderr(), "Usage: {} tokenize <filename>", args[0]).unwrap();
+        eprintln!("Usage: {} tokenize <filename>", args[0]);
         return Ok(());
     }
 
@@ -17,30 +16,30 @@ fn main() -> Result<(), String> {
     match command.as_str() {
         "tokenize" => {
             let file_contents = fs::read_to_string(filename).unwrap_or_else(|_| {
-                writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
+                eprintln!("Failed to read file {}", filename);
                 String::new()
             });
 
             let mut lexer = Lexer::new();
 
-            lexer.lex(file_contents.lines());
+            lexer.lex(&file_contents);
 
             for err in lexer.errors() {
                 eprintln!("{err}")
             }
 
             for token in lexer.tokens() {
-                println!("{token}")
+                println!("{token}");
             }
 
             println!("EOF  null");
 
-            if lexer.errors().len() > 0 {
+            if !lexer.errors().is_empty() {
                 std::process::exit(65)
             }
         }
         _ => {
-            writeln!(io::stderr(), "Unknown command: {}", command).unwrap();
+            eprintln!("Unknown command: {}", command);
         }
     }
 
