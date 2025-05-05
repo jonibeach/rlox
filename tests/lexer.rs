@@ -1,4 +1,4 @@
-use codecrafters_interpreter::lexer::{Error as LexerError, Lexer, Symbol, Token};
+use codecrafters_interpreter::lexer::{Error, Lexer, Symbol, Token};
 
 #[test]
 fn whitespace() {
@@ -23,12 +23,12 @@ fn whitespace() {
 #[test]
 fn string() {
     let mut lexer = Lexer::new();
-    let src = "\"hello\"";
+    let src = "\"helloz\"";
     lexer.lex(src);
 
     assert_eq!(
         lexer.tokens(),
-        [Symbol::new(0, Token::String("hello")),].as_slice()
+        [Symbol::new(0, Token::String("helloz")),].as_slice()
     );
 
     assert_eq!(lexer.errors(), [].as_slice())
@@ -42,17 +42,16 @@ fn string_fails() {
 
     assert_eq!(
         lexer.tokens(),
-        [Symbol::new(0, Token::String("hel")),].as_slice()
+        [
+            Symbol::new(0, Token::String("hel")),
+            Symbol::new(0, Token::Identifier("lo"))
+        ]
+        .as_slice()
     );
 
     assert_eq!(
         lexer.errors(),
-        [
-            Symbol::new(0, LexerError::UnexpectedCharacter('l')),
-            Symbol::new(0, LexerError::UnexpectedCharacter('o')),
-            Symbol::new(0, LexerError::UnterminatedString)
-        ]
-        .as_slice()
+        [Symbol::new(0, Error::UnterminatedString)].as_slice()
     )
 }
 
@@ -90,3 +89,32 @@ fn number() {
 //         [Symbol::new(0, LexerError::UnexpectedCharacter('.'))].as_slice()
 //     )
 // }
+
+#[test]
+fn ident() {
+    let mut lexer = Lexer::new();
+    let src = "_testing_lox_z";
+    lexer.lex(src);
+    assert_eq!(
+        lexer.tokens(),
+        [Symbol::new(0, Token::Identifier("_testing_lox_z")),].as_slice()
+    );
+    assert_eq!(lexer.errors(), [].as_slice())
+}
+
+#[test]
+fn ident_2() {
+    let mut lexer = Lexer::new();
+    let src = "test=123.123";
+    lexer.lex(src);
+    assert_eq!(
+        lexer.tokens(),
+        [
+            Symbol::new(0, Token::Identifier("test")),
+            Symbol::new(0, Token::Equal),
+            Symbol::new(0, Token::Number(123.123, "123.123"))
+        ]
+        .as_slice()
+    );
+    assert_eq!(lexer.errors(), [].as_slice())
+}

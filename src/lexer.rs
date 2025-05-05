@@ -41,6 +41,53 @@ impl<'src> Lexer<'src> {
             }
 
             let next_token = match c {
+                '\n' => {
+                    line += 1;
+                    None
+                }
+                '(' => Some(Token::LeftParen),
+                ')' => Some(Token::RightParen),
+                '{' => Some(Token::LeftBrace),
+                '}' => Some(Token::RightBrace),
+                '-' => Some(Token::Minus),
+                '+' => Some(Token::Plus),
+                '/' => {
+                    if let Some((_, '/')) = chars.peek() {
+                        chars.find(|(_, c)| c == &'\n');
+                        line += 1;
+                        None
+                    } else {
+                        Some(Token::Slash)
+                    }
+                }
+                '*' => Some(Token::Star),
+                ',' => Some(Token::Comma),
+                '.' => Some(Token::Dot),
+                ';' => Some(Token::Semicolon),
+                '=' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::EqualEqual
+                } else {
+                    Token::Equal
+                }),
+                '!' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::BangEqual
+                } else {
+                    Token::Bang
+                }),
+                '<' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::LessEqual
+                } else {
+                    Token::Less
+                }),
+                '>' => Some(if let Some((_, '=')) = chars.peek() {
+                    chars.next().unwrap();
+                    Token::GreaterEqual
+                } else {
+                    Token::Greater
+                }),
                 '"' => {
                     let start_idx = pos + 1;
                     let mut end_idx = start_idx;
@@ -91,53 +138,16 @@ impl<'src> Lexer<'src> {
                         }
                     }
                 }
-                '\n' => {
-                    line += 1;
-                    None
-                }
-                '(' => Some(Token::LeftParen),
-                ')' => Some(Token::RightParen),
-                '{' => Some(Token::LeftBrace),
-                '}' => Some(Token::RightBrace),
-                '-' => Some(Token::Minus),
-                '+' => Some(Token::Plus),
-                '/' => {
-                    if let Some((_, '/')) = chars.peek() {
-                        chars.find(|(_, c)| c == &'\n');
-                        line += 1;
-                        None
-                    } else {
-                        Some(Token::Slash)
+                '_' | 'a'..='z' | 'A'..='Z' => {
+                    let start_idx = pos;
+                    let mut end_idx = start_idx + 1;
+                    while let Some((_, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9')) = chars.peek() {
+                        chars.next().unwrap();
+                        end_idx += 1;
                     }
+
+                    Some(Token::Identifier(&src[start_idx..end_idx]))
                 }
-                '*' => Some(Token::Star),
-                ',' => Some(Token::Comma),
-                '.' => Some(Token::Dot),
-                ';' => Some(Token::Semicolon),
-                '=' => Some(if let Some((_, '=')) = chars.peek() {
-                    chars.next().unwrap();
-                    Token::EqualEqual
-                } else {
-                    Token::Equal
-                }),
-                '!' => Some(if let Some((_, '=')) = chars.peek() {
-                    chars.next().unwrap();
-                    Token::BangEqual
-                } else {
-                    Token::Bang
-                }),
-                '<' => Some(if let Some((_, '=')) = chars.peek() {
-                    chars.next().unwrap();
-                    Token::LessEqual
-                } else {
-                    Token::Less
-                }),
-                '>' => Some(if let Some((_, '=')) = chars.peek() {
-                    chars.next().unwrap();
-                    Token::GreaterEqual
-                } else {
-                    Token::Greater
-                }),
                 c if c.is_whitespace() => None,
                 invalid => {
                     add_error!(Error::UnexpectedCharacter(invalid));
@@ -217,6 +227,7 @@ pub enum Token<'src> {
     GreaterEqual,
     String(&'src str),
     Number(f64, &'src str),
+    Identifier(&'src str),
 }
 
 impl<'src> Token<'src> {
@@ -231,7 +242,6 @@ impl<'src> Token<'src> {
 
         match self {
             Self::String(lit) => lit,
-            Self::Number(..) => unreachable!(),
             _ => "null",
         }
         .to_string()
@@ -261,8 +271,9 @@ impl<'src> Token<'src> {
             Self::LessEqual => "<=",
             Self::Greater => ">",
             Self::GreaterEqual => ">=",
-            Self::Number(_, lit) => lit,
             Self::String(..) => unreachable!(),
+            Self::Number(_, lit) => lit,
+            Self::Identifier(lit) => lit,
         }
         .to_string()
     }
@@ -289,6 +300,7 @@ impl<'src> Token<'src> {
             Self::GreaterEqual => "GREATER_EQUAL",
             Self::String(..) => "STRING",
             Self::Number(..) => "NUMBER",
+            Self::Identifier(..) => "IDENTIFIER",
         }
     }
 }
