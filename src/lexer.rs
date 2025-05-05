@@ -146,7 +146,13 @@ impl<'src> Lexer<'src> {
                         end_idx += 1;
                     }
 
-                    Some(Token::Identifier(&src[start_idx..end_idx]))
+                    let str_repr = &src[start_idx..end_idx];
+
+                    if let Ok(kw) = str_repr.try_into() {
+                        Some(Token::Keyword(kw))
+                    } else {
+                        Some(Token::Identifier(str_repr))
+                    }
                 }
                 c if c.is_whitespace() => None,
                 invalid => {
@@ -204,6 +210,85 @@ impl Display for Symbol<Error> {
     }
 }
 
+macro_rules! impl_keyword_conversions {
+    (
+        $($kw:path=$lower:literal,$upper:literal,)*
+    ) => {
+        impl TryFrom<&str> for Keyword {
+            type Error = ();
+            fn try_from(value: &str) -> Result<Self, Self::Error> {
+                match value {
+                    $($lower => Ok($kw),)*
+                    _ => Err(())
+                }
+            }
+        }
+
+        impl Into<&'static str> for &Keyword {
+            fn into(self) -> &'static str {
+                match self {
+                    $($kw => $lower,)*
+                }
+            }
+        }
+
+        impl Into<&'static str> for Keyword {
+            fn into(self) -> &'static str {
+                match self {
+                    $($kw => $lower,)*
+                }
+            }
+        }
+
+        impl Keyword {
+            pub fn as_uppercase_str(&self) -> &'static str {
+                match self {
+                    $($kw => $upper,)*
+                }
+            }
+        }
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Keyword {
+    And,
+    Class,
+    Else,
+    False,
+    For,
+    Fun,
+    If,
+    Nil,
+    Or,
+    Print,
+    Return,
+    Super,
+    This,
+    True,
+    Var,
+    While,
+}
+
+impl_keyword_conversions! {
+    Keyword::And="and","AND",
+    Keyword::Class="class","CLASS",
+    Keyword::Else="else","ELSE",
+    Keyword::False="false","FALSE",
+    Keyword::For="for","FOR",
+    Keyword::Fun="fun","FUN",
+    Keyword::If="if","IF",
+    Keyword::Nil="nil","NIL",
+    Keyword::Or="or","OR",
+    Keyword::Print="print","PRINT",
+    Keyword::Return="return","RETURN",
+    Keyword::Super="super","SUPER",
+    Keyword::This="this","THIS",
+    Keyword::True="true","TRUE",
+    Keyword::Var="var","VAR",
+    Keyword::While="while","WHILE",
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Token<'src> {
     LeftParen,
@@ -228,6 +313,7 @@ pub enum Token<'src> {
     String(&'src str),
     Number(f64, &'src str),
     Identifier(&'src str),
+    Keyword(Keyword),
 }
 
 impl<'src> Token<'src> {
@@ -274,6 +360,7 @@ impl<'src> Token<'src> {
             Self::String(..) => unreachable!(),
             Self::Number(_, lit) => lit,
             Self::Identifier(lit) => lit,
+            Self::Keyword(kw) => kw.into(),
         }
         .to_string()
     }
@@ -301,6 +388,7 @@ impl<'src> Token<'src> {
             Self::String(..) => "STRING",
             Self::Number(..) => "NUMBER",
             Self::Identifier(..) => "IDENTIFIER",
+            Self::Keyword(kw) => kw.as_uppercase_str(),
         }
     }
 }

@@ -1,4 +1,4 @@
-use codecrafters_interpreter::lexer::{Error, Lexer, Symbol, Token};
+use codecrafters_interpreter::lexer::{Error, Keyword, Lexer, Symbol, Token};
 
 #[test]
 fn whitespace() {
@@ -113,6 +113,45 @@ fn ident_2() {
             Symbol::new(0, Token::Identifier("test")),
             Symbol::new(0, Token::Equal),
             Symbol::new(0, Token::Number(123.123, "123.123"))
+        ]
+        .as_slice()
+    );
+    assert_eq!(lexer.errors(), [].as_slice())
+}
+
+#[test]
+fn keyword() {
+    let mut lexer = Lexer::new();
+    let src = "fun test() = class Test";
+    lexer.lex(src);
+    assert_eq!(
+        lexer.tokens(),
+        [
+            Symbol::new(0, Token::Keyword(Keyword::Fun)),
+            Symbol::new(0, Token::Identifier("test")),
+            Symbol::new(0, Token::LeftParen),
+            Symbol::new(0, Token::RightParen),
+            Symbol::new(0, Token::Equal),
+            Symbol::new(0, Token::Keyword(Keyword::Class)),
+            Symbol::new(0, Token::Identifier("Test"))
+        ]
+        .as_slice()
+    );
+    assert_eq!(lexer.errors(), [].as_slice())
+}
+
+#[test]
+fn keyword_2() {
+    let mut lexer = Lexer::new();
+    let src = "classor class or class";
+    lexer.lex(src);
+    assert_eq!(
+        lexer.tokens(),
+        [
+            Symbol::new(0, Token::Identifier("classor")),
+            Symbol::new(0, Token::Keyword(Keyword::Class)),
+            Symbol::new(0, Token::Keyword(Keyword::Or)),
+            Symbol::new(0, Token::Keyword(Keyword::Class)),
         ]
         .as_slice()
     );
