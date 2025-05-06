@@ -4,11 +4,11 @@ use std::fs;
 use codecrafters_interpreter::lexer::Lexer;
 use codecrafters_interpreter::parser::Parser;
 
-fn main() -> Result<(), String> {
+fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
         eprintln!("Usage: {} tokenize <filename>", args[0]);
-        return Ok(());
+        return;
     }
 
     let command = &args[1];
@@ -40,8 +40,8 @@ fn main() -> Result<(), String> {
             }
         }
         "parse" => {
-            let mut parser = Parser::new();
-            let ast = parser.parse(lexer.tokens());
+            let parser = Parser::new(lexer.tokens());
+            let ast = parser.parse();
 
             for node in ast {
                 println!("{node}");
@@ -51,6 +51,4 @@ fn main() -> Result<(), String> {
             eprintln!("Unknown command: {}", command);
         }
     }
-
-    Ok(())
 }

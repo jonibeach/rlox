@@ -178,7 +178,7 @@ pub enum Error {
     UnterminatedString,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Symbol<T> {
     line: usize,
     inner: T,
