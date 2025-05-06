@@ -12,6 +12,8 @@ pub enum Ast<'src> {
     Number(Number),
     String(&'src str),
     Group(Vec<Ast<'src>>),
+    Not(Box<Ast<'src>>),
+    Negate(Box<Ast<'src>>),
 }
 
 impl Display for Ast<'_> {
@@ -29,6 +31,8 @@ impl Display for Ast<'_> {
                     .collect::<Vec<_>>()
                     .join(" ")
             ),
+            Self::Not(v) => write!(f, "(! {v})"),
+            Self::Negate(v) => write!(f, "(- {v})"),
         }
     }
 }
@@ -53,10 +57,10 @@ pub type Result<'src, T = Ast<'src>> = std::result::Result<T, Error<'src>>;
 /// Grammar
 ///
 ///     let program = "value*";
-/// 
+///
 ///     let group = "( value* )";
 ///
-///     let value = "bool | nil | number | string | group";
+///     let value = "bool | nil | number | string | group | !value | -value";
 ///
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
@@ -83,16 +87,11 @@ impl<'src> Parser<'src> {
     }
 
     fn accept(&self, token: Token<'src>) -> Option<Symbol<Token<'src>>> {
-        eprintln!("accepting {token}");
         if let Some(next) = self.peek() {
-            eprintln!("next token is {}", next.token());
             if next.token() == token {
-                eprintln!("accepted");
                 return Some(self.next().unwrap());
             }
         };
-
-        eprintln!("not accepted");
 
         None
     }
@@ -109,7 +108,12 @@ impl<'src> Parser<'src> {
             Token::Keyword(Keyword::Nil) => Ast::Nil,
             Token::Number(n, _) => Ast::Number(n),
             Token::String(s) => Ast::String(s),
-            _ => return self.accept_group(),
+            _ => {
+                return self
+                    .accept_group()
+                    .or_else(|| self.accept_negate())
+                    .or_else(|| self.accept_not())
+            }
         };
 
         self.next().unwrap();
@@ -125,7 +129,6 @@ impl<'src> Parser<'src> {
     ///
     ///     let group = "( value* )";
     fn accept_group(&self) -> Option<Ast<'src>> {
-        eprintln!("parsing group");
         self.accept(Token::LeftParen)?;
 
         let mut members = Vec::new();
@@ -142,12 +145,24 @@ impl<'src> Parser<'src> {
         Some(Ast::Group(members))
     }
 
-    fn _parse_group(&self) -> Result<'src> {
-        self.accept_group().ok_or(Error::Expected("group"))
+    /// Accepts a
+    ///
+    ///     let value = "!value";
+    fn accept_not(&self) -> Option<Ast<'src>> {
+        self.accept(Token::Bang)?;
+        Some(Ast::Not(self.accept_value()?.into()))
+    }
+
+    /// Accepts a
+    ///
+    ///     let value = "-value";
+    fn accept_negate(&self) -> Option<Ast<'src>> {
+        self.accept(Token::Minus)?;
+        Some(Ast::Negate(self.accept_value()?.into()))
     }
 
     /// Parser the program, ie.
-    /// 
+    ///
     ///     let program = "value*";
     pub fn parse(&self) -> Vec<Ast<'src>> {
         let mut program = Vec::new();

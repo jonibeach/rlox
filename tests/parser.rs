@@ -40,3 +40,23 @@ fn group_in_group() {
         ])]
     )
 }
+
+#[test]
+fn negate_and_not() {
+    let mut lexer = Lexer::new();
+    let src = "(!(123 -55.03))";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let parser = Parser::new(lexer.tokens());
+    let ast = parser.parse();
+
+    assert_eq!(
+        ast,
+        vec![Ast::Group(vec![Ast::Not(Box::new(Ast::Group(vec![
+            Ast::Number(123.0.into()),
+            Ast::Negate(Box::new(Ast::Number(55.03.into())))
+        ])))])]
+    )
+}
