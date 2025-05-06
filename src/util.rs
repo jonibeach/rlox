@@ -10,9 +10,9 @@ impl FromStr for Number {
     }
 }
 
-impl Into<Number> for f64 {
-    fn into(self) -> Number {
-        Number(self)
+impl From<f64> for Number {
+    fn from(value: f64) -> Self {
+        Self(value)
     }
 }
 

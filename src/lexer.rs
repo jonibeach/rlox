@@ -236,19 +236,17 @@ macro_rules! impl_keyword_conversions {
             }
         }
 
-        impl Into<&'static str> for &Keyword {
-            fn into(self) -> &'static str {
-                match self {
+        impl From<&Keyword> for &'static str {
+            fn from(value: &Keyword) -> Self {
+                match value {
                     $($kw => $lower,)*
                 }
             }
         }
 
-        impl Into<&'static str> for Keyword {
-            fn into(self) -> &'static str {
-                match self {
-                    $($kw => $lower,)*
-                }
+        impl From<Keyword> for &'static str {
+            fn from(value: Keyword) -> Self {
+                (&value).into()
             }
         }
 
@@ -328,7 +326,7 @@ pub enum Token<'src> {
     Keyword(Keyword),
 }
 
-impl<'src> Token<'src> {
+impl Token<'_> {
     fn literal(&self) -> String {
         if let Self::Number(n, _) = self {
             return format!("{n}");
