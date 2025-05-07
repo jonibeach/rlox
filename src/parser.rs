@@ -15,6 +15,8 @@ pub enum UnaryOp {
 pub enum BinOp {
     Div,
     Mul,
+    Add,
+    Sub,
 }
 
 #[derive(Debug, PartialEq)]
@@ -57,6 +59,8 @@ impl Display for Ast<'_> {
                 match bin_op {
                     BinOp::Div => "/",
                     BinOp::Mul => "*",
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
                 }
             ),
         }
@@ -78,17 +82,20 @@ impl Display for Error<'_> {
 impl std::error::Error for Error<'_> {}
 
 pub type Result<'src, T = Ast<'src>> = std::result::Result<T, Error<'src>>;
+type AcceptToken<'src> = Option<Token<'src>>;
+type AcceptAst<'src> = Option<Ast<'src>>;
 
+/// let program = "term*";
 ///
-/// Grammar
+/// let term = "factor ((+|-) factor)*";
 ///
-///     let program = "value*";
+/// let factor = "unary ((*|/) unary)*";
 ///
-///     let expr = "value (*|/) value";
+/// let unary = "(!|-)? (unary | atom)"";
 ///
-///     let group = "( value* )";
+/// let group = "( term* )";
 ///
-///     let value = "bool | nil | number | string | group | (!|-)value | expr";
+/// let atom =  "number | string | true | false | nil | group | term";
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
     idx: Cell<usize>,
@@ -102,22 +109,22 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn get_token(&self, idx: usize) -> Option<Token<'src>> {
+    fn get_token(&self, idx: usize) -> AcceptToken<'src> {
         self.tokens.get(idx).map(|t| t.token())
     }
 
-    fn peek(&self) -> Option<Token<'src>> {
+    fn peek(&self) -> AcceptToken<'src> {
         self.get_token(self.idx.get())
     }
 
-    fn next(&self) -> Option<Token<'src>> {
+    fn next(&self) -> AcceptToken<'src> {
         let token = self.get_token(self.idx.get());
         self.idx.set(self.idx.get() + 1);
 
         token
     }
 
-    fn accept(&self, token: Token<'src>) -> Option<Token<'src>> {
+    fn accept(&self, token: Token<'src>) -> AcceptToken<'src> {
         if let Some(next) = self.peek() {
             if next == token {
                 return Some(self.next().unwrap());
@@ -127,37 +134,82 @@ impl<'src> Parser<'src> {
         None
     }
 
-    /// Accepts a value
-    ///
-    ///     let value = "bool | nil | number | string | group | (!|*)value";
-    fn accept_value(&self) -> Option<Ast<'src>> {
-        let next = self.peek()?;
-        // std::thread::sleep(std::time::Duration::from_millis(100));
-        eprintln!("accepting value {next}");
+    /// Parses the program
+    ///     let program = "term*";
+    pub fn parse(&self) -> Vec<Ast<'src>> {
+        let mut program = Vec::new();
 
-        let ast = match next {
-            Token::Keyword(Keyword::True) => Ast::Bool(true),
-            Token::Keyword(Keyword::False) => Ast::Bool(false),
-            Token::Keyword(Keyword::Nil) => Ast::Nil,
-            Token::Number(n, _) => Ast::Number(n),
-            Token::String(s) => Ast::String(s),
-            _ => {
-                return self
-                    .accept_group()
-                    .or_else(|| self.accept_unary())
-                    .or_else(|| self.accept_expr())
-            }
-        };
+        while let Some(a) = self.accept_term() {
+            program.push(a);
+        }
 
-        self.next().unwrap();
-
-        Some(ast)
+        program
     }
 
-    /// Accepts a
-    ///
-    ///     let group = "( value* )";
-    fn accept_group(&self) -> Option<Ast<'src>> {
+    fn accept_term(&self) -> AcceptAst<'src> {
+        let mut a = self.accept_factor()?;
+        eprintln!("accepting add/sub expr {a}");
+
+        while let Some(Token::Plus | Token::Minus) = self.peek() {
+            let bin_op = match self.next().unwrap() {
+                Token::Plus => BinOp::Add,
+                Token::Minus => BinOp::Sub,
+                other => unreachable!("{other}"),
+            };
+            let b = self.accept_factor()?;
+            eprintln!("accepted add/sub expr {a} {bin_op:?} {b}");
+            a = Ast::BinOp(a.into(), bin_op, b.into())
+        }
+
+        Some(a)
+    }
+
+    fn accept_factor(&self) -> AcceptAst<'src> {
+        let mut a = self.accept_unary()?;
+        eprintln!("accepting div/mul expr {a}");
+
+        while let Some(Token::Slash | Token::Star) = self.peek() {
+            let bin_op = match self.next().unwrap() {
+                Token::Slash => BinOp::Div,
+                Token::Star => BinOp::Mul,
+                other => unreachable!("{other}"),
+            };
+            let b = self.accept_unary()?;
+            eprintln!("accepted div/mul expr {a} {bin_op:?} {b}");
+            a = Ast::BinOp(a.into(), bin_op, b.into())
+        }
+
+        Some(a)
+    }
+
+    /// Accepts a unary expression
+    fn accept_unary(&self) -> AcceptAst<'src> {
+        // std::thread::sleep(std::time::Duration::from_millis(100));
+        let unary = self
+            .accept(Token::Bang)
+            .or_else(|| self.accept(Token::Minus));
+
+        eprintln!("accepting unary {unary:?}");
+
+        if let Some(unary) = unary {
+            let unary_op = match unary {
+                Token::Bang => UnaryOp::Not,
+                Token::Minus => UnaryOp::Neg,
+                other => unreachable!("{other}"),
+            };
+
+            Some(Ast::UnaryOp(
+                unary_op,
+                self.accept_atom().or_else(|| self.accept_unary())?.into(),
+            ))
+        } else {
+            eprintln!("not unary");
+            self.accept_atom()
+        }
+    }
+
+    /// Accepts a group
+    fn accept_group(&self) -> AcceptAst<'src> {
         self.accept(Token::LeftParen)?;
 
         eprintln!("accepting group");
@@ -165,7 +217,7 @@ impl<'src> Parser<'src> {
         let mut members = Vec::new();
 
         while Some(Token::RightParen) != self.peek() {
-            if let Some(m) = self.accept_expr() {
+            if let Some(m) = self.accept_term() {
                 members.push(m);
             }
         }
@@ -177,56 +229,24 @@ impl<'src> Parser<'src> {
         Some(Ast::Group(members))
     }
 
-    /// Accepts a
-    ///
-    ///     let value = "(!|*)value";
-    fn accept_unary(&self) -> Option<Ast<'src>> {
-        let token = self
-            .accept(Token::Bang)
-            .or_else(|| self.accept(Token::Minus))?;
-        Some(Ast::UnaryOp(
-            match token {
-                Token::Bang => UnaryOp::Not,
-                Token::Minus => UnaryOp::Neg,
-                other => unreachable!("{other}"),
-            },
-            self.accept_value()?.into(),
-        ))
-    }
+    /// Accepts an atom
+    ///     let atom =  "number | string | true | false | nil | term";
+    fn accept_atom(&self) -> AcceptAst<'src> {
+        let next = self.peek()?;
+        eprintln!("accepting atom {next}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
-    fn accept_expr(&self) -> Option<Ast<'src>> {
-        let mut a = self.accept_value()?;
-        eprintln!("accepting expr {a}");
+        let ast = match next {
+            Token::Number(n, _) => Ast::Number(n),
+            Token::String(s) => Ast::String(s),
+            Token::Keyword(Keyword::True) => Ast::Bool(true),
+            Token::Keyword(Keyword::False) => Ast::Bool(false),
+            Token::Keyword(Keyword::Nil) => Ast::Nil,
+            _ => return self.accept_group().or_else(|| self.accept_term()),
+        };
 
-        while let Some(Token::Slash | Token::Star) = self.peek() {
-            let bin_op = match self.peek() {
-                Some(Token::Slash) => BinOp::Div,
-                Some(Token::Star) => BinOp::Mul,
-                _ => return Some(a),
-            };
-            self.next().unwrap();
-            let b = self.accept_value()?;
-            eprintln!("accepted expr {a} {bin_op:?} {b}");
-            a = Ast::BinOp(a.into(), bin_op, b.into())
-        }
+        self.next().unwrap();
 
-        Some(a)
-    }
-
-    fn parse_expr(&self) -> Result<'src> {
-        self.accept_expr().ok_or(Error::Expected("expr"))
-    }
-
-    /// Parser the program, ie.
-    ///
-    ///     let program = "value*";
-    pub fn parse(&self) -> Vec<Ast<'src>> {
-        let mut program = Vec::new();
-
-        while let Ok(g) = self.parse_expr() {
-            program.push(g);
-        }
-
-        program
+        Some(ast)
     }
 }
