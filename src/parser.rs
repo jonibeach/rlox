@@ -53,6 +53,8 @@ pub enum CmpOp {
     Gte,
     Lt,
     Lte,
+    Eq,
+    Neq,
 }
 
 impl Display for CmpOp {
@@ -65,6 +67,8 @@ impl Display for CmpOp {
                 Self::Gte => ">=",
                 Self::Lt => "<",
                 Self::Lte => "<=",
+                Self::Eq => "==",
+                Self::Neq => "!=",
             }
         )
     }
@@ -125,7 +129,7 @@ type AcceptAst<'src> = Option<Ast<'src>>;
 /// Parses the lox programming language using a recursive descent approach based on the following grammar rules
 ///     let program = "term*";
 ///
-///     let cmp = "term ((>|>=|<|<=) term)*";
+///     let cmp = "term ((>|>=|<|<=|==|!=) term)*";
 ///
 ///     let term = "factor ((+|-) factor)*";
 ///
@@ -133,9 +137,9 @@ type AcceptAst<'src> = Option<Ast<'src>>;
 ///
 ///     let unary = "(!|-)? (unary | atom)";
 ///
-///     let group = "( term* )";
+///     let group = "( cmp* )";
 ///
-///     let atom =  "number | string | true | false | nil | group | term";
+///     let atom =  "number | string | true | false | nil | group | cmp";
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
     idx: Cell<usize>,
@@ -190,14 +194,22 @@ impl<'src> Parser<'src> {
         let mut a = self.accept_term()?;
         eprintln!("accepting cmp {a}");
 
-        while let Some(Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual) =
-            self.peek()
+        while let Some(
+            Token::Greater
+            | Token::GreaterEqual
+            | Token::Less
+            | Token::LessEqual
+            | Token::EqualEqual
+            | Token::BangEqual,
+        ) = self.peek()
         {
             let cmp_op = match self.next().unwrap() {
                 Token::Greater => CmpOp::Gt,
                 Token::GreaterEqual => CmpOp::Gte,
                 Token::Less => CmpOp::Lt,
                 Token::LessEqual => CmpOp::Lte,
+                Token::EqualEqual => CmpOp::Eq,
+                Token::BangEqual => CmpOp::Neq,
                 other => unreachable!("{other}"),
             };
             let b = self.accept_term()?;
@@ -280,7 +292,7 @@ impl<'src> Parser<'src> {
         let mut members = Vec::new();
 
         while Some(Token::RightParen) != self.peek() {
-            if let Some(m) = self.accept_term() {
+            if let Some(m) = self.accept_cmp() {
                 members.push(m);
             }
         }
@@ -304,7 +316,7 @@ impl<'src> Parser<'src> {
             Token::Keyword(Keyword::True) => Ast::Bool(true),
             Token::Keyword(Keyword::False) => Ast::Bool(false),
             Token::Keyword(Keyword::Nil) => Ast::Nil,
-            _ => return self.accept_group().or_else(|| self.accept_term()),
+            _ => return self.accept_group().or_else(|| self.accept_cmp()),
         };
 
         eprintln!("accepted atom {ast}");

@@ -1,6 +1,6 @@
 use codecrafters_interpreter::{
     lexer::Lexer,
-    parser::{Ast, BinOp, Parser, UnaryOp},
+    parser::{Ast, BinOp, CmpOp, Parser, UnaryOp},
 };
 
 #[test]
@@ -119,5 +119,46 @@ fn nested_expr_pretty_basic_still_with_comments() {
             )])
             .into()
         )])]
+    )
+}
+
+#[test]
+fn basic_cmps_with_groups() {
+    let mut lexer = Lexer::new();
+    let src = "(94 != 25) == ((-39 + 86) >= (72 * 19))";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let parser = Parser::new(lexer.tokens());
+    let ast = parser.parse();
+
+    assert_eq!(
+        ast,
+        vec![Ast::CmpOp(
+            Ast::Group(vec![Ast::CmpOp(
+                Ast::Number(94.0.into()).into(),
+                CmpOp::Neq,
+                Ast::Number(25.0.into()).into()
+            )])
+            .into(),
+            CmpOp::Eq,
+            Ast::Group(vec![Ast::CmpOp(
+                Ast::Group(vec![Ast::BinOp(
+                    Ast::UnaryOp(UnaryOp::Neg, Ast::Number(39.0.into()).into()).into(),
+                    BinOp::Add,
+                    Ast::Number(86.0.into()).into()
+                )])
+                .into(),
+                CmpOp::Gte,
+                Ast::Group(vec![Ast::BinOp(
+                    Ast::Number(72.0.into()).into(),
+                    BinOp::Mul,
+                    Ast::Number(19.0.into()).into()
+                )])
+                .into()
+            )])
+            .into()
+        )]
     )
 }
