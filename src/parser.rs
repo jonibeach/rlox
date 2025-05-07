@@ -11,12 +11,63 @@ pub enum UnaryOp {
     Neg,
 }
 
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Not => "!",
+                Self::Neg => "-",
+            }
+        )
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum BinOp {
     Div,
     Mul,
     Add,
     Sub,
+}
+
+impl Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Div => "/",
+                Self::Mul => "*",
+                Self::Add => "+",
+                Self::Sub => "-",
+            }
+        )
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CmpOp {
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+}
+
+impl Display for CmpOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Gt => ">",
+                Self::Gte => ">=",
+                Self::Lt => "<",
+                Self::Lte => "<=",
+            }
+        )
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -28,6 +79,7 @@ pub enum Ast<'src> {
     Group(Vec<Self>),
     UnaryOp(UnaryOp, Box<Self>),
     BinOp(Box<Self>, BinOp, Box<Self>),
+    CmpOp(Box<Self>, CmpOp, Box<Self>),
 }
 
 impl Display for Ast<'_> {
@@ -45,24 +97,9 @@ impl Display for Ast<'_> {
                     .collect::<Vec<_>>()
                     .join(" ")
             ),
-            Self::UnaryOp(unary_op, n) => write!(
-                f,
-                "({} {n})",
-                match unary_op {
-                    UnaryOp::Neg => "-",
-                    UnaryOp::Not => "!",
-                }
-            ),
-            Self::BinOp(a, bin_op, b) => write!(
-                f,
-                "({} {a} {b})",
-                match bin_op {
-                    BinOp::Div => "/",
-                    BinOp::Mul => "*",
-                    BinOp::Add => "+",
-                    BinOp::Sub => "-",
-                }
-            ),
+            Self::UnaryOp(unary_op, n) => write!(f, "({unary_op} {n})",),
+            Self::BinOp(a, bin_op, b) => write!(f, "({bin_op} {a} {b})",),
+            Self::CmpOp(a, cmp_op, b) => write!(f, "({cmp_op} {a} {b})"),
         }
     }
 }
@@ -85,17 +122,20 @@ pub type Result<'src, T = Ast<'src>> = std::result::Result<T, Error<'src>>;
 type AcceptToken<'src> = Option<Token<'src>>;
 type AcceptAst<'src> = Option<Ast<'src>>;
 
-/// let program = "term*";
+/// Parses the lox programming language using a recursive descent approach based on the following grammar rules
+///     let program = "term*";
 ///
-/// let term = "factor ((+|-) factor)*";
+///     let cmp = "term ((>|>=|<|<=) term)*";
 ///
-/// let factor = "unary ((*|/) unary)*";
+///     let term = "factor ((+|-) factor)*";
 ///
-/// let unary = "(!|-)? (unary | atom)"";
+///     let factor = "unary ((*|/) unary)*";
 ///
-/// let group = "( term* )";
+///     let unary = "(!|-)? (unary | atom)";
 ///
-/// let atom =  "number | string | true | false | nil | group | term";
+///     let group = "( term* )";
+///
+///     let atom =  "number | string | true | false | nil | group | term";
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
     idx: Cell<usize>,
@@ -139,16 +179,38 @@ impl<'src> Parser<'src> {
     pub fn parse(&self) -> Vec<Ast<'src>> {
         let mut program = Vec::new();
 
-        while let Some(a) = self.accept_term() {
+        while let Some(a) = self.accept_cmp() {
             program.push(a);
         }
 
         program
     }
 
+    fn accept_cmp(&self) -> AcceptAst<'src> {
+        let mut a = self.accept_term()?;
+        eprintln!("accepting cmp {a}");
+
+        while let Some(Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual) =
+            self.peek()
+        {
+            let cmp_op = match self.next().unwrap() {
+                Token::Greater => CmpOp::Gt,
+                Token::GreaterEqual => CmpOp::Gte,
+                Token::Less => CmpOp::Lt,
+                Token::LessEqual => CmpOp::Lte,
+                other => unreachable!("{other}"),
+            };
+            let b = self.accept_term()?;
+            eprintln!("accepted add/sub expr {a} {cmp_op:?} {b}");
+            a = Ast::CmpOp(a.into(), cmp_op, b.into())
+        }
+
+        Some(a)
+    }
+
     fn accept_term(&self) -> AcceptAst<'src> {
         let mut a = self.accept_factor()?;
-        eprintln!("accepting add/sub expr {a}");
+        eprintln!("accepting term {a}");
 
         while let Some(Token::Plus | Token::Minus) = self.peek() {
             let bin_op = match self.next().unwrap() {
@@ -157,7 +219,7 @@ impl<'src> Parser<'src> {
                 other => unreachable!("{other}"),
             };
             let b = self.accept_factor()?;
-            eprintln!("accepted add/sub expr {a} {bin_op:?} {b}");
+            eprintln!("accepted term {a} {bin_op:?} {b}");
             a = Ast::BinOp(a.into(), bin_op, b.into())
         }
 
@@ -166,7 +228,7 @@ impl<'src> Parser<'src> {
 
     fn accept_factor(&self) -> AcceptAst<'src> {
         let mut a = self.accept_unary()?;
-        eprintln!("accepting div/mul expr {a}");
+        eprintln!("accepting factor {a}");
 
         while let Some(Token::Slash | Token::Star) = self.peek() {
             let bin_op = match self.next().unwrap() {
@@ -175,7 +237,7 @@ impl<'src> Parser<'src> {
                 other => unreachable!("{other}"),
             };
             let b = self.accept_unary()?;
-            eprintln!("accepted div/mul expr {a} {bin_op:?} {b}");
+            eprintln!("accepted factor {a} {bin_op:?} {b}");
             a = Ast::BinOp(a.into(), bin_op, b.into())
         }
 
@@ -184,7 +246,6 @@ impl<'src> Parser<'src> {
 
     /// Accepts a unary expression
     fn accept_unary(&self) -> AcceptAst<'src> {
-        // std::thread::sleep(std::time::Duration::from_millis(100));
         let unary = self
             .accept(Token::Bang)
             .or_else(|| self.accept(Token::Minus));
@@ -197,6 +258,8 @@ impl<'src> Parser<'src> {
                 Token::Minus => UnaryOp::Neg,
                 other => unreachable!("{other}"),
             };
+
+            eprintln!("accepted unary {unary_op} {unary}");
 
             Some(Ast::UnaryOp(
                 unary_op,
@@ -234,7 +297,6 @@ impl<'src> Parser<'src> {
     fn accept_atom(&self) -> AcceptAst<'src> {
         let next = self.peek()?;
         eprintln!("accepting atom {next}");
-        std::thread::sleep(std::time::Duration::from_millis(100));
 
         let ast = match next {
             Token::Number(n, _) => Ast::Number(n),
@@ -244,6 +306,8 @@ impl<'src> Parser<'src> {
             Token::Keyword(Keyword::Nil) => Ast::Nil,
             _ => return self.accept_group().or_else(|| self.accept_term()),
         };
+
+        eprintln!("accepted atom {ast}");
 
         self.next().unwrap();
 
