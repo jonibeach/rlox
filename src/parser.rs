@@ -85,82 +85,6 @@ impl_op_display! {
     EqOp::Neq => "!=",
 }
 
-macro_rules! impl_ast_display {
-    ($name:ident) => {
-        impl Display for $name<'_> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let mut d = format!("{}", self.0);
-
-                for (op, n) in &self.1 {
-                    d = format!("({op} {d} {n})")
-                }
-
-                f.write_str(&d)
-            }
-        }
-    };
-}
-
-macro_rules! impl_ast_utils {
-    ($name:ident, $op:ident, $child:ident) => {
-        impl<'src> $name<'src> {
-            pub fn new(child: $child<'src>) -> Self {
-                Self(child, Vec::new())
-            }
-
-            pub fn extend(mut self, op: $op, member: $child<'src>) -> Self {
-                self.1.push((op, member));
-                self
-            }
-        }
-    };
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Equality<'src>(Cmp<'src>, Vec<(EqOp, Cmp<'src>)>);
-impl_ast_display!(Equality);
-impl_ast_utils! {Equality, EqOp, Cmp}
-
-#[derive(Debug, PartialEq)]
-pub struct Cmp<'src>(Term<'src>, Vec<(CmpOp, Term<'src>)>);
-impl_ast_display!(Cmp);
-impl_ast_utils! {Cmp, CmpOp, Term}
-
-#[derive(Debug, PartialEq)]
-pub struct Term<'src>(Factor<'src>, Vec<(TermOp, Factor<'src>)>);
-impl_ast_display!(Term);
-impl_ast_utils! {Term, TermOp, Factor}
-
-#[derive(Debug, PartialEq)]
-pub struct Factor<'src>(Unary<'src>, Vec<(FactorOp, Unary<'src>)>);
-impl_ast_display!(Factor);
-impl_ast_utils! {Factor, FactorOp, Unary}
-
-#[derive(Debug, PartialEq)]
-pub enum Unary<'src> {
-    Unary(UnaryOp, Box<Unary<'src>>),
-    Primary(Primary<'src>),
-}
-
-impl<'src> Unary<'src> {
-    pub fn unary(op: UnaryOp, inner: Self) -> Self {
-        Self::Unary(op, inner.into())
-    }
-
-    pub fn primary(primary: Primary<'src>) -> Self {
-        Self::Primary(primary)
-    }
-}
-
-impl Display for Unary<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unary(op, i) => write!(f, "({op} {i}"),
-            Self::Primary(i) => write!(f, "{i}"),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub enum Primary<'src> {
     Bool(bool),
@@ -206,23 +130,23 @@ impl Display for Primary<'_> {
 
 #[derive(Debug, PartialEq)]
 pub enum Expr<'src> {
-    Equality(Equality<'src>),
-    Cmp(Cmp<'src>),
-    Term(Term<'src>),
-    Factor(Factor<'src>),
-    Unary(Unary<'src>),
+    Equality(Box<Self>, EqOp, Box<Self>),
+    Cmp(Box<Self>, CmpOp, Box<Self>),
+    Term(Box<Self>, TermOp, Box<Self>),
+    Factor(Box<Self>, FactorOp, Box<Self>),
+    Unary(UnaryOp, Box<Self>),
     Primary(Primary<'src>),
 }
 
 impl Display for Expr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Equality(i) => i.fmt(f),
-            Self::Cmp(i) => i.fmt(f),
-            Self::Term(i) => i.fmt(f),
-            Self::Factor(i) => i.fmt(f),
-            Self::Unary(i) => i.fmt(f),
-            Self::Primary(i) => i.fmt(f),
+            Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
+            Self::Cmp(a, op, b) => write!(f, "({op} {a} {b})"),
+            Self::Term(a, op, b) => write!(f, "({op} {a} {b})"),
+            Self::Factor(a, op, b) => write!(f, "({op} {a} {b})"),
+            Self::Unary(op, i) => write!(f, "({op} {i})"),
+            Self::Primary(primary) => primary.fmt(f),
         }
     }
 }
@@ -233,21 +157,86 @@ pub enum Ast<'src> {
 }
 
 #[derive(Debug)]
-pub enum Error<'src> {
-    InvalidToken(Symbol<Token<'src>>),
-    Expected(&'static str),
+pub enum Expected<'src> {
+    Expr,
+    Token(Token<'src>),
+}
+
+impl Display for Expected<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let i = match self {
+            Self::Expr => "expression".into(),
+            Self::Token(t) => format!("{}", t.token_type()),
+        };
+
+        write!(f, "Expect {i}.")
+    }
+}
+
+#[derive(Debug)]
+pub enum ErrorKind<'src> {
+    Expected(Expected<'src>),
+}
+
+impl Display for ErrorKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Expected(e) => e.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Error<'src> {
+    line: usize,
+    token: Option<Token<'src>>,
+    kind: ErrorKind<'src>,
 }
 
 impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Parser error")
+        write!(
+            f,
+            "[line {}] Error at '{}': {}",
+            self.line + 1,
+            if let Some(t) = self.token {
+                format!("{}", t.lexeme())
+            } else {
+                "".to_string()
+            },
+            self.kind
+        )
     }
 }
 
-impl std::error::Error for Error<'_> {}
+impl<'src> std::error::Error for Error<'src> {}
 
 pub type Result<'src, T> = std::result::Result<T, Error<'src>>;
 type AcceptToken<'src> = Option<Token<'src>>;
+type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
+type ParseExpr<'src> = Result<'src, Expr<'src>>;
+
+trait ParserExpectedExt<'src, T> {
+    fn expected(self, expected: Expected<'src>, parser: &Parser<'src>) -> Result<'src, T>;
+}
+
+impl<'src> ParserExpectedExt<'src, Symbol<Token<'src>>> for Option<Symbol<Token<'src>>> {
+    fn expected(
+        self,
+        expected: Expected<'src>,
+        parser: &Parser<'src>,
+    ) -> Result<'src, Symbol<Token<'src>>> {
+        if let Some(i) = self {
+            Ok(i)
+        } else {
+            Err(Error {
+                line: parser.line(),
+                token: None,
+                kind: ErrorKind::Expected(expected),
+            })
+        }
+    }
+}
 
 /// Parses the lox programming language using a recursive descent approach based on Lox's grammar rules
 ///
@@ -282,15 +271,33 @@ impl<'src> Parser<'src> {
         }
     }
 
+    fn line(&self) -> usize {
+        self.peek_symbol()
+            .or(self.tokens.last().copied())
+            .map(|t| t.line())
+            .unwrap_or(0)
+    }
+
+    fn get_symbol(&self, idx: usize) -> AcceptSymbol<'src> {
+        self.tokens.get(idx).copied()
+    }
+
+    fn peek_symbol(&self) -> AcceptSymbol<'src> {
+        self.get_symbol(self.idx.get())
+    }
+
     fn get_token(&self, idx: usize) -> AcceptToken<'src> {
-        self.tokens.get(idx).map(|t| t.token())
+        self.get_symbol(idx).map(|s| s.token())
     }
 
     fn peek(&self) -> AcceptToken<'src> {
+        // std::thread::sleep(std::time::Duration::from_millis(100));
+        eprintln!("peek {:?}", self.get_token(self.idx.get()));
         self.get_token(self.idx.get())
     }
 
     fn next(&self) -> AcceptToken<'src> {
+        // std::thread::sleep(std::time::Duration::from_millis(100));
         let token = self.get_token(self.idx.get());
         self.idx.set(self.idx.get() + 1);
 
@@ -307,23 +314,32 @@ impl<'src> Parser<'src> {
         None
     }
 
-    /// Parses the program
-    pub fn parse(&self) -> Vec<Expr<'src>> {
-        let mut program = Vec::new();
-
-        while let Some(a) = self.accept_expr() {
-            program.push(a);
+    fn expect(&self, token: Token<'src>) -> Result<'src, Token<'src>> {
+        match self.peek() {
+            Some(next) if next == token => {
+                self.next().unwrap();
+                Ok(next)
+            }
+            got => Err(Error {
+                line: self.line(),
+                token: got,
+                kind: ErrorKind::Expected(Expected::Token(token)),
+            }),
         }
-
-        program
     }
 
-    fn accept_expr(&self) -> Option<Expr<'src>> {
-        Some(Expr(self.accept_eq()?))
+    /// Parses the program
+    pub fn parse(&self) -> ParseExpr<'src> {
+        self.parse_expr()
     }
 
-    fn accept_eq(&self) -> Option<Equality<'src>> {
-        let mut a = Equality::new(self.accept_cmp()?);
+    fn parse_expr(&self) -> ParseExpr<'src> {
+        self.parse_eq()
+    }
+
+    fn parse_eq(&self) -> ParseExpr<'src> {
+        let mut a = self.parse_cmp()?;
+
         eprintln!("accepting eq {a}");
 
         while let Some(Token::EqualEqual | Token::BangEqual) = self.peek() {
@@ -332,16 +348,17 @@ impl<'src> Parser<'src> {
                 Token::BangEqual => EqOp::Neq,
                 other => unreachable!("{other}"),
             };
-            let b = self.accept_cmp()?;
+            let b = self.parse_cmp()?;
             eprintln!("accepted eq {a} {op:?} {b}");
-            a = a.extend(op, b)
+            a = Expr::Equality(a.into(), op, b.into())
         }
 
-        Some(a)
+        Ok(a)
     }
 
-    fn accept_cmp(&self) -> Option<Cmp<'src>> {
-        let mut a = Cmp::new(self.accept_term()?);
+    fn parse_cmp(&self) -> ParseExpr<'src> {
+        let mut a = self.parse_term()?;
+
         eprintln!("accepting cmp {a}");
 
         while let Some(Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual) =
@@ -354,16 +371,16 @@ impl<'src> Parser<'src> {
                 Token::LessEqual => CmpOp::Lte,
                 other => unreachable!("{other}"),
             };
-            let b = self.accept_term()?;
+            let b = self.parse_term()?;
             eprintln!("accepted cmp {a} {op:?} {b}");
-            a = a.extend(op, b);
+            a = Expr::Cmp(a.into(), op, b.into());
         }
 
-        Some(a)
+        Ok(a)
     }
 
-    fn accept_term(&self) -> Option<Term<'src>> {
-        let mut a = Term::new(self.accept_factor()?);
+    fn parse_term(&self) -> ParseExpr<'src> {
+        let mut a = self.parse_factor()?;
         eprintln!("accepting term {a}");
 
         while let Some(Token::Plus | Token::Minus) = self.peek() {
@@ -372,16 +389,17 @@ impl<'src> Parser<'src> {
                 Token::Minus => TermOp::Sub,
                 other => unreachable!("{other}"),
             };
-            let b = self.accept_factor()?;
+            let b = self.parse_factor()?;
             eprintln!("accepted term {a} {op:?} {b}");
-            a = a.extend(op, b);
+            a = Expr::Term(a.into(), op, b.into());
         }
 
-        Some(a)
+        Ok(a)
     }
 
-    fn accept_factor(&self) -> Option<Factor<'src>> {
-        let mut a = Factor::new(self.accept_unary()?);
+    fn parse_factor(&self) -> ParseExpr<'src> {
+        let mut a = self.parse_unary()?;
+
         eprintln!("accepting factor {a}");
 
         while let Some(Token::Slash | Token::Star) = self.peek() {
@@ -390,16 +408,16 @@ impl<'src> Parser<'src> {
                 Token::Star => FactorOp::Mul,
                 other => unreachable!("{other}"),
             };
-            let b = self.accept_unary()?;
+            let b = self.parse_unary()?;
             eprintln!("accepted factor {a} {op:?} {b}");
-            a = a.extend(op, b);
+            a = Expr::Factor(a.into(), op, b.into())
         }
 
-        Some(a)
+        Ok(a)
     }
 
     /// Accepts a unary expression
-    fn accept_unary(&self) -> Option<Unary<'src>> {
+    fn parse_unary(&self) -> ParseExpr<'src> {
         let unary = self
             .accept(Token::Bang)
             .or_else(|| self.accept(Token::Minus));
@@ -415,31 +433,31 @@ impl<'src> Parser<'src> {
 
             eprintln!("accepted unary {op} {unary}");
 
-            Some(Unary::Unary(op, self.accept_unary()?.into()))
+            Ok(Expr::Unary(op, self.parse_unary()?.into()))
         } else {
             eprintln!("not unary");
-            Some(Unary::Primary(self.accept_primary()?))
+            self.parse_primary()
         }
     }
 
     /// Accepts a group
-    fn accept_group(&self) -> Option<Expr<'src>> {
-        self.accept(Token::LeftParen)?;
+    fn parse_group(&self) -> ParseExpr<'src> {
+        self.expect(Token::LeftParen)?;
 
         eprintln!("accepting group");
 
-        let inner = self.accept_expr()?;
+        let inner = self.parse_expr()?;
 
-        self.accept(Token::RightParen)?;
+        self.expect(Token::RightParen)?;
 
         eprintln!("accepting group DONE");
 
-        Some(inner)
+        Ok(Expr::Primary(Primary::Group(inner.into())))
     }
 
     /// Accepts a primary
-    fn accept_primary(&self) -> Option<Primary<'src>> {
-        let next = self.peek()?;
+    fn parse_primary(&self) -> ParseExpr<'src> {
+        let next = self.peek_symbol().expected(Expected::Expr, self)?.token();
         eprintln!("accepting primary {next}");
 
         let ast = match next {
@@ -448,13 +466,12 @@ impl<'src> Parser<'src> {
             Token::Keyword(Keyword::True) => Primary::Bool(true),
             Token::Keyword(Keyword::False) => Primary::Bool(false),
             Token::Keyword(Keyword::Nil) => Primary::Nil,
-            _ => Primary::Group(self.accept_group()?.into()),
+            _ => return self.parse_group(),
         };
 
+        self.next().unwrap();
         eprintln!("accepted primary {ast}");
 
-        self.next().unwrap();
-
-        Some(ast)
+        Ok(Expr::Primary(ast))
     }
 }

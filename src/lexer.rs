@@ -338,7 +338,7 @@ impl Token<'_> {
         }
         .to_string()
     }
-    fn lexeme(&self) -> String {
+    pub fn lexeme(&self) -> String {
         if let Self::String(s) = self {
             return format!("\"{s}\"");
         }
@@ -370,7 +370,7 @@ impl Token<'_> {
         }
         .to_string()
     }
-    fn token_type(&self) -> &'static str {
+    pub fn token_type(&self) -> &'static str {
         match self {
             Self::LeftParen => "LEFT_PAREN",
             Self::RightParen => "RIGHT_PAREN",

@@ -41,11 +41,12 @@ fn main() {
         }
         "parse" => {
             let parser = Parser::new(lexer.tokens());
-            let ast = parser.parse();
+            let ast = match parser.parse() {
+                Ok(ast) => ast,
+                Err(..) => std::process::exit(65),
+            };
 
-            for node in ast {
-                println!("{node}");
-            }
+            println!("{ast}");
         }
         _ => {
             eprintln!("Unknown command: {}", command);
