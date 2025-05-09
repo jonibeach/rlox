@@ -1,30 +1,40 @@
 use codecrafters_interpreter::{
     lexer::Lexer,
-    parser::{Ast, BinOp, CmpOp, Parser, UnaryOp},
+    parser::{Cmp, CmpOp, Equality, Expr, Factor, Parser, Primary, Term, TermOp, Unary, UnaryOp},
 };
 
 #[test]
 fn group() {
     let mut lexer = Lexer::new();
-    let src = "(\"test\" 234.0)";
+    let src = "(\"test\" + / 234.0)";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
     let ast = parser.parse();
+    Expr(Equality::new(Cmp::new(
+        Term::new(Factor::new(Unary::primary(Primary::String("test"))))
+            .extend(TermOp::Add, Unary::primary(Primary::Number(234.into()))),
+    )));
 
     assert_eq!(
         ast,
-        vec![Ast::Group(vec![
-            Ast::String("test"),
-            Ast::Number(234.0.into())
-        ])]
+        vec![Expr(Equality::new(Cmp::new()))
+
+            Ast::Group(
+            Ast::BinOp(
+                Ast::String("test").into(),
+                BinOp::Div,
+                Ast::Number(234.0.into()).into()
+            )
+            .into()
+        )]
     )
 }
 
 #[test]
 fn group_in_group() {
     let mut lexer = Lexer::new();
-    let src = "(\"test\" (\"hello\" 555.111))";
+    let src = "(\"test\" == (\"hello\" == 555.111))";
     lexer.lex(src);
 
     assert_eq!(lexer.errors(), [].as_slice());
@@ -34,10 +44,22 @@ fn group_in_group() {
 
     assert_eq!(
         ast,
-        vec![Ast::Group(vec![
-            Ast::String("test"),
-            Ast::Group(vec![Ast::String("hello"), Ast::Number(555.111.into())])
-        ])]
+        vec![Ast::Group(
+            Ast::CmpOp(
+                Ast::String("test").into(),
+                CmpOp::Eq,
+                Ast::Group(
+                    Ast::CmpOp(
+                        Ast::String("hello").into(),
+                        CmpOp::Eq,
+                        Ast::Number(555.111.into()).into()
+                    )
+                    .into()
+                )
+                .into()
+            )
+            .into()
+        )]
     )
 }
 
@@ -54,14 +76,21 @@ fn negate_and_not() {
 
     assert_eq!(
         ast,
-        vec![Ast::Group(vec![Ast::UnaryOp(
-            UnaryOp::Not,
-            Box::new(Ast::Group(vec![Ast::BinOp(
-                Ast::Number(123.0.into()).into(),
-                BinOp::Add,
-                Ast::UnaryOp(UnaryOp::Neg, Ast::Number(55.03.into()).into()).into()
-            )]))
-        )])]
+        vec![Ast::Group(
+            Ast::UnaryOp(
+                UnaryOp::Not,
+                Ast::Group(
+                    Ast::BinOp(
+                        Ast::Number(123.0.into()).into(),
+                        BinOp::Add,
+                        Ast::UnaryOp(UnaryOp::Neg, Ast::Number(55.03.into()).into()).into()
+                    )
+                    .into()
+                )
+                .into()
+            )
+            .into()
+        )]
     )
 }
 
@@ -104,21 +133,27 @@ fn nested_expr_pretty_basic_still_with_comments() {
 
     assert_eq!(
         ast,
-        vec![Ast::Group(vec![Ast::BinOp(
+        vec![Ast::Group(
             Ast::BinOp(
-                Ast::Number(77.0.into()).into(),
-                BinOp::Mul,
-                Ast::UnaryOp(UnaryOp::Neg, Ast::Number(74.0.into()).into()).into()
+                Ast::BinOp(
+                    Ast::Number(77.0.into()).into(),
+                    BinOp::Mul,
+                    Ast::UnaryOp(UnaryOp::Neg, Ast::Number(74.0.into()).into()).into()
+                )
+                .into(),
+                BinOp::Div,
+                Ast::Group(
+                    Ast::BinOp(
+                        Ast::Number(87.0.into()).into(),
+                        BinOp::Mul,
+                        Ast::Number(99.0.into()).into()
+                    )
+                    .into()
+                )
+                .into()
             )
-            .into(),
-            BinOp::Div,
-            Ast::Group(vec![Ast::BinOp(
-                Ast::Number(87.0.into()).into(),
-                BinOp::Mul,
-                Ast::Number(99.0.into()).into()
-            )])
             .into()
-        )])]
+        )]
     )
 }
 
@@ -136,28 +171,40 @@ fn basic_cmps_with_groups() {
     assert_eq!(
         ast,
         vec![Ast::CmpOp(
-            Ast::Group(vec![Ast::CmpOp(
-                Ast::Number(94.0.into()).into(),
-                CmpOp::Neq,
-                Ast::Number(25.0.into()).into()
-            )])
+            Ast::Group(
+                Ast::CmpOp(
+                    Ast::Number(94.0.into()).into(),
+                    CmpOp::Neq,
+                    Ast::Number(25.0.into()).into()
+                )
+                .into()
+            )
             .into(),
             CmpOp::Eq,
-            Ast::Group(vec![Ast::CmpOp(
-                Ast::Group(vec![Ast::BinOp(
-                    Ast::UnaryOp(UnaryOp::Neg, Ast::Number(39.0.into()).into()).into(),
-                    BinOp::Add,
-                    Ast::Number(86.0.into()).into()
-                )])
-                .into(),
-                CmpOp::Gte,
-                Ast::Group(vec![Ast::BinOp(
-                    Ast::Number(72.0.into()).into(),
-                    BinOp::Mul,
-                    Ast::Number(19.0.into()).into()
-                )])
+            Ast::Group(
+                Ast::CmpOp(
+                    Ast::Group(
+                        Ast::BinOp(
+                            Ast::UnaryOp(UnaryOp::Neg, Ast::Number(39.0.into()).into()).into(),
+                            BinOp::Add,
+                            Ast::Number(86.0.into()).into()
+                        )
+                        .into()
+                    )
+                    .into(),
+                    CmpOp::Gte,
+                    Ast::Group(
+                        Ast::BinOp(
+                            Ast::Number(72.0.into()).into(),
+                            BinOp::Mul,
+                            Ast::Number(19.0.into()).into()
+                        )
+                        .into()
+                    )
+                    .into()
+                )
                 .into()
-            )])
+            )
             .into()
         )]
     )
