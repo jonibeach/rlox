@@ -53,7 +53,13 @@ fn main() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
             };
-            println!("{}", ast.eval().unwrap());
+            match ast.eval() {
+                Ok(res) => println!("{res}"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(70)
+                }
+            }
         }
         _ => {
             eprintln!("Unknown command: {}", command);

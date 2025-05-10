@@ -94,28 +94,6 @@ pub enum Primary<'src> {
     Group(Box<Expr<'src>>),
 }
 
-impl<'src> Primary<'src> {
-    pub fn bool(bool: bool) -> Self {
-        Self::Bool(bool)
-    }
-
-    pub fn nil() -> Self {
-        Self::Nil
-    }
-
-    pub fn number(num: f64) -> Self {
-        Self::Number(num.into())
-    }
-
-    pub fn string(s: &'src str) -> Self {
-        Self::String(s)
-    }
-
-    pub fn group(expr: Expr<'src>) -> Self {
-        Self::Group(expr.into())
-    }
-}
-
 impl Display for Primary<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -129,16 +107,16 @@ impl Display for Primary<'_> {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Expr<'src> {
-    Equality(Box<Self>, EqOp, Box<Self>),
-    Cmp(Box<Self>, CmpOp, Box<Self>),
-    Term(Box<Self>, TermOp, Box<Self>),
-    Factor(Box<Self>, FactorOp, Box<Self>),
-    Unary(UnaryOp, Box<Self>),
+pub enum ExprKind<'src> {
+    Equality(Box<Expr<'src>>, EqOp, Box<Expr<'src>>),
+    Cmp(Box<Expr<'src>>, CmpOp, Box<Expr<'src>>),
+    Term(Box<Expr<'src>>, TermOp, Box<Expr<'src>>),
+    Factor(Box<Expr<'src>>, FactorOp, Box<Expr<'src>>),
+    Unary(UnaryOp, Box<Expr<'src>>),
     Primary(Primary<'src>),
 }
 
-impl Display for Expr<'_> {
+impl Display for ExprKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
@@ -152,8 +130,39 @@ impl Display for Expr<'_> {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct Expr<'src> {
+    line: usize,
+    kind: ExprKind<'src>,
+}
+
+impl Display for Expr<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl<'src> Expr<'src> {
+    pub fn kind(&self) -> &ExprKind<'src> {
+        &self.kind
+    }
+
+    pub fn line(&self) -> usize {
+        self.line
+    }
+}
+
+impl<'src> ExprKind<'src> {
+    fn into_expr(self, parser: &Parser) -> Expr<'src> {
+        Expr {
+            line: parser.line(),
+            kind: self,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Ast<'src> {
-    Expr(Expr<'src>),
+    ExprKind(ExprKind<'src>),
 }
 
 #[derive(Debug)]
@@ -350,7 +359,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_cmp()?;
             eprintln!("accepted eq {a} {op:?} {b}");
-            a = Expr::Equality(a.into(), op, b.into())
+            a = ExprKind::Equality(a.into(), op, b.into()).into_expr(self);
         }
 
         Ok(a)
@@ -373,7 +382,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_term()?;
             eprintln!("accepted cmp {a} {op:?} {b}");
-            a = Expr::Cmp(a.into(), op, b.into());
+            a = ExprKind::Cmp(a.into(), op, b.into()).into_expr(self);
         }
 
         Ok(a)
@@ -391,7 +400,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_factor()?;
             eprintln!("accepted term {a} {op:?} {b}");
-            a = Expr::Term(a.into(), op, b.into());
+            a = ExprKind::Term(a.into(), op, b.into()).into_expr(self);
         }
 
         Ok(a)
@@ -410,7 +419,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_unary()?;
             eprintln!("accepted factor {a} {op:?} {b}");
-            a = Expr::Factor(a.into(), op, b.into())
+            a = ExprKind::Factor(a.into(), op, b.into()).into_expr(self)
         }
 
         Ok(a)
@@ -433,7 +442,7 @@ impl<'src> Parser<'src> {
 
             eprintln!("accepted unary {op} {unary}");
 
-            Ok(Expr::Unary(op, self.parse_unary()?.into()))
+            Ok(ExprKind::Unary(op, self.parse_unary()?.into()).into_expr(self))
         } else {
             eprintln!("not unary");
             self.parse_primary()
@@ -452,7 +461,7 @@ impl<'src> Parser<'src> {
 
         eprintln!("accepting group DONE");
 
-        Ok(Expr::Primary(Primary::Group(inner.into())))
+        Ok(ExprKind::Primary(Primary::Group(inner.into())).into_expr(self))
     }
 
     /// Accepts a primary
@@ -472,6 +481,6 @@ impl<'src> Parser<'src> {
         self.next().unwrap();
         eprintln!("accepted primary {ast}");
 
-        Ok(Expr::Primary(ast))
+        Ok(ExprKind::Primary(ast).into_expr(self))
     }
 }

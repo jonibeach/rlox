@@ -1,7 +1,4 @@
-use codecrafters_interpreter::{
-    lexer::Lexer,
-    parser::{CmpOp, EqOp, Expr, FactorOp, Parser, Primary, TermOp, UnaryOp},
-};
+use codecrafters_interpreter::{lexer::Lexer, parser::Parser};
 
 #[test]
 fn group() {
@@ -12,17 +9,7 @@ fn group() {
     let parser = Parser::new(lexer.tokens());
     let ast = parser.parse().unwrap();
 
-    assert_eq!(
-        ast,
-        Expr::Primary(Primary::Group(
-            Expr::Term(
-                Expr::Primary(Primary::String("test")).into(),
-                TermOp::Add,
-                Expr::Primary(Primary::Number(234.0.into())).into()
-            )
-            .into()
-        ))
-    )
+    assert_eq!(format!("{ast}"), r#"(group (+ test 234.0))"#)
 }
 
 #[test]
@@ -37,30 +24,15 @@ fn group_in_group() {
     let ast = parser.parse().unwrap();
 
     assert_eq!(
-        ast,
-        Expr::Primary(Primary::Group(
-            Expr::Factor(
-                Expr::Primary(Primary::String("test")).into(),
-                FactorOp::Div,
-                Expr::Primary(Primary::Group(
-                    Expr::Term(
-                        Expr::Primary(Primary::String("hello")).into(),
-                        TermOp::Add,
-                        Expr::Primary(Primary::Number(555.111.into())).into()
-                    )
-                    .into()
-                ))
-                .into()
-            )
-            .into()
-        ))
+        format!("{ast}",),
+        r#"(group (/ test (group (+ hello 555.111))))"#
     )
 }
 
 #[test]
 fn negate_and_not() {
     let mut lexer = Lexer::new();
-    let src = "(!(123 +-55.03))";
+    let src = "(!(123.0 +-55.03))";
     lexer.lex(src);
 
     assert_eq!(lexer.errors(), [].as_slice());
@@ -68,28 +40,7 @@ fn negate_and_not() {
     let parser = Parser::new(lexer.tokens());
     let ast = parser.parse().unwrap();
 
-    assert_eq!(
-        ast,
-        Expr::Primary(Primary::Group(
-            Expr::Unary(
-                UnaryOp::Not,
-                Expr::Primary(Primary::Group(
-                    Expr::Term(
-                        Expr::Primary(Primary::Number(123.0.into())).into(),
-                        TermOp::Add,
-                        Expr::Unary(
-                            UnaryOp::Neg,
-                            Expr::Primary(Primary::Number(55.03.into())).into()
-                        )
-                        .into()
-                    )
-                    .into()
-                ))
-                .into()
-            )
-            .into()
-        ))
-    )
+    assert_eq!(format!("{ast}"), r#"(group (! (group (+ 123.0 (- 55.03)))))"#)
 }
 
 #[test]
@@ -103,20 +54,7 @@ fn basic_expr() {
     let parser = Parser::new(lexer.tokens());
     let ast = parser.parse().unwrap();
 
-    assert_eq!(
-        ast,
-        Expr::Factor(
-            Expr::Factor(
-                Expr::Primary(Primary::Number(82.0.into())).into(),
-                FactorOp::Mul,
-                Expr::Primary(Primary::Number(99.0.into())).into()
-            )
-            .into(),
-            FactorOp::Div,
-            Expr::Primary(Primary::Number(18.0.into())).into()
-        )
-        .into()
-    )
+    assert_eq!(format!("{ast}"), r#"(/ (* 82.0 99.0) 18.0)"#,)
 }
 
 #[test]
@@ -131,38 +69,8 @@ fn nested_expr_pretty_basic_still_with_comments() {
     let ast = parser.parse().unwrap();
 
     assert_eq!(
-        ast,
-        Expr::Primary(
-            Primary::Group(
-                Expr::Factor(
-                    Expr::Factor(
-                        Expr::Primary(Primary::Number(77.0.into())).into(),
-                        FactorOp::Mul,
-                        Expr::Unary(
-                            UnaryOp::Neg,
-                            Expr::Primary(Primary::Number(74.0.into())).into()
-                        )
-                        .into()
-                    )
-                    .into(),
-                    FactorOp::Div,
-                    Expr::Primary(
-                        Primary::Group(
-                            Expr::Factor(
-                                Expr::Primary(Primary::Number(87.0.into())).into(),
-                                FactorOp::Mul,
-                                Expr::Primary(Primary::Number(99.0.into())).into()
-                            )
-                            .into()
-                        )
-                        .into()
-                    )
-                    .into()
-                )
-                .into()
-            )
-            .into()
-        )
+        format!("{ast}"),
+        r#"(group (/ (* 77.0 (- 74.0)) (group (* 87.0 99.0))))"#,
     )
 }
 
@@ -178,50 +86,7 @@ fn basic_cmps_with_groups() {
     let ast = parser.parse().unwrap();
 
     assert_eq!(
-        ast,
-        Expr::Equality(
-            Expr::Primary(Primary::Group(
-                Expr::Equality(
-                    Expr::Primary(Primary::Number(94.0.into()).into()).into(),
-                    EqOp::Neq,
-                    Expr::Primary(Primary::Number(25.0.into()).into()).into()
-                )
-                .into()
-            ))
-            .into(),
-            EqOp::Eq,
-            Expr::Primary(Primary::Group(
-                Expr::Cmp(
-                    Expr::Primary(
-                        Primary::Group(
-                            Expr::Term(
-                                Expr::Unary(
-                                    UnaryOp::Neg,
-                                    Expr::Primary(Primary::Number(39.0.into())).into()
-                                )
-                                .into(),
-                                TermOp::Add,
-                                Expr::Primary(Primary::Number(86.0.into())).into()
-                            )
-                            .into()
-                        )
-                        .into()
-                    )
-                    .into(),
-                    CmpOp::Gte,
-                    Expr::Primary(Primary::Group(
-                        Expr::Factor(
-                            Expr::Primary(Primary::Number(72.0.into())).into(),
-                            FactorOp::Mul,
-                            Expr::Primary(Primary::Number(19.0.into())).into()
-                        )
-                        .into()
-                    ))
-                    .into()
-                )
-                .into()
-            ))
-            .into()
-        )
+        format!("{ast}"),
+        r#"(== (group (!= 94.0 25.0)) (group (>= (group (+ (- 39.0) 86.0)) (group (* 72.0 19.0)))))"#,
     )
 }

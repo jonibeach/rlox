@@ -1,28 +1,66 @@
-use crate::parser::{CmpOp, EqOp, Expr, FactorOp, Primary, TermOp, UnaryOp};
+use std::fmt::Display;
 
-#[derive(Debug)]
-pub enum Error {
-    InvalidMathOperand,
-    CannotConvertToString,
+use crate::parser::{CmpOp, EqOp, Expr, ExprKind, FactorOp, Primary, TermOp, UnaryOp};
+
+#[derive(Debug, PartialEq)]
+pub enum ErrorKind {
+    MustBeNumber,
+    BothMustBeNumbers,
+    BothMustBeNumbersOrStrings,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct Error {
+    line: usize,
+    kind: ErrorKind,
+}
+
+impl Error {
+    pub fn new(line: usize, kind: ErrorKind) -> Self {
+        Self { line, kind }
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self.kind {
+            ErrorKind::MustBeNumber => "Operand must be a number.",
+            ErrorKind::BothMustBeNumbers => "Operands must be numbers.",
+            ErrorKind::BothMustBeNumbersOrStrings => "Operands must be two numbers or two strings.",
+        };
+
+        writeln!(f, "{msg}")?;
+        write!(f, "[line {}]", self.line + 1)
+    }
+}
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl<'src> Expr<'src> {
+    fn err_inner(&self, kind: ErrorKind) -> Error {
+        Error {
+            line: self.line(),
+            kind,
+        }
+    }
+    fn err<T>(&self, kind: ErrorKind) -> Result<T> {
+        Err(self.err_inner(kind))
+    }
+
     pub fn eval(&self) -> Result<String> {
         eprintln!("eval {self}");
-        let res = match self {
-            Self::Equality(..) => self.truthiness()?.to_string(),
-            Self::Cmp(..) => self.truthiness()?.to_string(),
-            Self::Term(..) => self
-                .as_str()
-                .or_else(|_| self.as_num().map(|n| n.to_string()))?,
-            Self::Factor(..) => self.as_num()?.to_string(),
-            Self::Unary(op, i) => match op {
+        let res = match self.kind() {
+            ExprKind::Equality(..) => self.truthiness()?.to_string(),
+            ExprKind::Cmp(..) => self.truthiness()?.to_string(),
+            ExprKind::Term(..) => self.as_num().map(|n| n.to_string()).or_else(|_| {
+                self.as_string()
+                    .ok_or_else(|| self.err_inner(ErrorKind::BothMustBeNumbersOrStrings))
+            })?,
+            ExprKind::Factor(..) => self.as_num()?.to_string(),
+            ExprKind::Unary(op, i) => match op {
                 UnaryOp::Not => (!i.truthiness()?).to_string(),
                 UnaryOp::Neg => (-i.as_num()?).to_string(),
             },
-            Self::Primary(p) => match p {
+            ExprKind::Primary(p) => match p {
                 Primary::Bool(bool) => bool.to_string(),
                 Primary::Group(i) => return i.eval(),
                 Primary::Nil => String::from("nil"),
@@ -36,55 +74,59 @@ impl<'src> Expr<'src> {
 
     fn as_num(&self) -> Result<f64> {
         eprintln!("as num {self}");
-        match self {
-            Self::Equality(..) => Err(Error::InvalidMathOperand),
-            Self::Cmp(..) => Err(Error::InvalidMathOperand),
-            Self::Term(a, op, b) => match op {
+        match self.kind() {
+            ExprKind::Equality(..) => self.err(ErrorKind::MustBeNumber),
+            ExprKind::Cmp(..) => self.err(ErrorKind::MustBeNumber),
+            ExprKind::Term(a, op, b) => match op {
                 TermOp::Add => Ok(a.as_num()? + b.as_num()?),
                 TermOp::Sub => Ok(a.as_num()? - b.as_num()?),
             },
-            Self::Factor(a, op, b) => match op {
-                FactorOp::Div => Ok(a.as_num()? / b.as_num()?),
-                FactorOp::Mul => Ok(a.as_num()? * b.as_num()?),
-            },
-            Self::Unary(op, i) => match op {
-                UnaryOp::Not => Err(Error::InvalidMathOperand),
+            ExprKind::Factor(a, op, b) => {
+                if let (Ok(a), Ok(b)) = (a.as_num(), b.as_num()) {
+                    Ok(match op {
+                        FactorOp::Mul => a * b,
+                        FactorOp::Div => a / b,
+                    })
+                } else {
+                    self.err(ErrorKind::BothMustBeNumbers)
+                }
+            }
+            ExprKind::Unary(op, i) => match op {
+                UnaryOp::Not => self.err(ErrorKind::MustBeNumber),
                 UnaryOp::Neg => Ok(-i.as_num()?),
             },
-            Self::Primary(p) => match p {
-                Primary::Bool(_) => Err(Error::InvalidMathOperand),
+            ExprKind::Primary(p) => match p {
                 Primary::Group(i) => i.as_num(),
-                Primary::Nil => Err(Error::InvalidMathOperand),
                 Primary::Number(n) => Ok(n.into()),
-                Primary::String(_) => Err(Error::InvalidMathOperand),
+                _ => self.err(ErrorKind::MustBeNumber),
             },
         }
     }
 
-    fn as_str(&self) -> Result<String> {
+    fn as_string(&self) -> Option<String> {
         eprintln!("as str {self}");
-        match self {
-            Self::Term(a, op, b) => {
-                if let (Ok(a), Ok(b), TermOp::Add) = (a.as_str(), b.as_str(), op) {
+        match self.kind() {
+            ExprKind::Term(a, op, b) => {
+                if let (Some(a), Some(b), TermOp::Add) = (a.as_string(), b.as_string(), op) {
                     eprintln!("both valid strings");
-                    return Ok(a + &b);
+                    return Some(a + &b);
                 }
             }
-            Self::Primary(p) => match p {
-                Primary::String(s) => return Ok(s.to_string()),
-                Primary::Group(i) => return Ok(i.as_str()?),
+            ExprKind::Primary(p) => match p {
+                Primary::String(s) => return Some(s.to_string()),
+                Primary::Group(i) => return Some(i.as_string()?),
                 _ => {}
             },
             _ => {}
         };
 
-        Err(Error::CannotConvertToString)
+        None
     }
 
     fn truthiness(&self) -> Result<bool> {
         eprintln!("truthiness {self}");
-        let res = match self {
-            Self::Equality(a, op, b) => {
+        let res = match self.kind() {
+            ExprKind::Equality(a, op, b) => {
                 if let Ok(a) = a.as_num() {
                     let Ok(b) = b.as_num() else { return Ok(false) };
 
@@ -92,8 +134,10 @@ impl<'src> Expr<'src> {
                         EqOp::Eq => a == b,
                         EqOp::Neq => a != b,
                     }
-                } else if let Ok(a) = a.as_str() {
-                    let Ok(b) = b.as_str() else { return Ok(false) };
+                } else if let Some(a) = a.as_string() {
+                    let Some(b) = b.as_string() else {
+                        return Ok(false);
+                    };
 
                     match op {
                         EqOp::Eq => a == b,
@@ -106,19 +150,19 @@ impl<'src> Expr<'src> {
                     }
                 }
             }
-            Self::Cmp(a, op, b) => match op {
+            ExprKind::Cmp(a, op, b) => match op {
                 CmpOp::Gt => a.as_num()? > b.as_num()?,
                 CmpOp::Gte => a.as_num()? >= b.as_num()?,
                 CmpOp::Lt => a.as_num()? < b.as_num()?,
                 CmpOp::Lte => a.as_num()? <= b.as_num()?,
             },
-            Self::Term(..) => true,
-            Self::Factor(..) => true,
-            Self::Unary(op, i) => match op {
+            ExprKind::Term(..) => true,
+            ExprKind::Factor(..) => true,
+            ExprKind::Unary(op, i) => match op {
                 UnaryOp::Not => !i.truthiness()?,
                 UnaryOp::Neg => i.truthiness()?,
             },
-            Self::Primary(p) => match p {
+            ExprKind::Primary(p) => match p {
                 Primary::Bool(i) => *i,
                 Primary::Group(i) => i.truthiness()?,
                 Primary::Nil => false,

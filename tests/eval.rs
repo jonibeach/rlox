@@ -1,4 +1,8 @@
-use codecrafters_interpreter::{lexer::Lexer, parser::Parser};
+use codecrafters_interpreter::{
+    eval::{Error, ErrorKind},
+    lexer::Lexer,
+    parser::Parser,
+};
 
 #[test]
 fn bool() {
@@ -103,3 +107,35 @@ fn string_concat_groups() {
 
     assert_eq!(res, "quzbazquzbar")
 }
+
+#[test]
+fn unary_expected_num() {
+    let mut lexer = Lexer::new();
+    let src = r#"-"test""#;
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let ast = parser.parse().unwrap();
+    let res = ast.eval();
+
+    assert_eq!(res, Err(Error::new(0, ErrorKind::MustBeNumber)))
+}
+
+#[test]
+fn expect_both_nums_or_strings() {
+    let mut lexer = Lexer::new();
+    let src = 
+        r#"// lol comment here
+        "test" + 123.44"#;
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let ast = parser.parse().unwrap();
+    let res = ast.eval();
+
+    assert_eq!(
+        res,
+        Err(Error::new(1, ErrorKind::BothMustBeNumbersOrStrings))
+    )
+}
+
