@@ -1,6 +1,8 @@
 use std::fmt::Display;
 
-use crate::parser::{CmpOp, EqOp, Expr, ExprKind, FactorOp, Primary, TermOp, UnaryOp};
+use crate::parser::{
+    CmpOp, EqOp, Expr, ExprKind, FactorOp, Primary, Program, Stmt, StmtKind, TermOp, UnaryOp,
+};
 
 #[derive(Debug, PartialEq)]
 pub enum ErrorKind {
@@ -35,6 +37,35 @@ impl Display for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
+impl<'src> Program<'src> {
+    pub fn eval(&self) -> Result<String> {
+        let mut res = String::new();
+        for stmt in self.stmts() {
+            res = stmt.eval()?;
+        }
+
+        Ok(res)
+    }
+
+    pub fn run(&self) -> Result<()> {
+        self.eval()?;
+
+        Ok(())
+    }
+}
+
+impl<'src> Stmt<'src> {
+    fn eval(&self) -> Result<String> {
+        match self.kind() {
+            StmtKind::Expr(expr) => expr.eval(),
+            StmtKind::Print(expr) => {
+                println!("{}", expr.eval()?);
+                Ok(String::new())
+            }
+        }
+    }
+}
+
 impl<'src> Expr<'src> {
     fn err_inner(&self, kind: ErrorKind) -> Error {
         Error {
@@ -46,7 +77,7 @@ impl<'src> Expr<'src> {
         Err(self.err_inner(kind))
     }
 
-    pub fn eval(&self) -> Result<String> {
+    fn eval(&self) -> Result<String> {
         eprintln!("eval {self}");
         let res = match self.kind() {
             ExprKind::Equality(..) => self.truthiness()?.to_string(),

@@ -1,14 +1,25 @@
 use codecrafters_interpreter::{
     eval::{Error, ErrorKind},
-    lexer::Lexer,
+    lexer::{Keyword, Lexer, Symbol, Token},
     parser::Parser,
 };
 
 #[test]
 fn bool() {
     let mut lexer = Lexer::new();
-    let src = "true";
+    let src = "true;";
     lexer.lex(src);
+
+    eprintln!("{:?}", lexer.tokens());
+
+    assert_eq!(
+        lexer.tokens(),
+        [
+            Symbol::new(0, Token::Keyword(Keyword::True)),
+            Symbol::new(0, Token::Semicolon)
+        ]
+        .as_slice()
+    );
 
     let parser = Parser::new(lexer.tokens());
     let ast = parser.parse().unwrap();
@@ -20,7 +31,7 @@ fn bool() {
 #[test]
 fn nil() {
     let mut lexer = Lexer::new();
-    let src = "nil";
+    let src = "nil;";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -33,7 +44,7 @@ fn nil() {
 #[test]
 fn unarys() {
     let mut lexer = Lexer::new();
-    let src = "(!nil) == true";
+    let src = "(!nil) == true;";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -46,7 +57,7 @@ fn unarys() {
 #[test]
 fn numbers() {
     let mut lexer = Lexer::new();
-    let src = "1+2*45";
+    let src = "1+2*45;";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -59,7 +70,7 @@ fn numbers() {
 #[test]
 fn neg_number() {
     let mut lexer = Lexer::new();
-    let src = "-2";
+    let src = "-2;";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -72,7 +83,7 @@ fn neg_number() {
 #[test]
 fn neg_numbers_2() {
     let mut lexer = Lexer::new();
-    let src = "1-2*45";
+    let src = "1-2*45;";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -85,7 +96,7 @@ fn neg_numbers_2() {
 #[test]
 fn string_concat() {
     let mut lexer = Lexer::new();
-    let src = "\"hello\"+\"hello\"";
+    let src = "\"hello\"+\"hello\";";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -98,7 +109,7 @@ fn string_concat() {
 #[test]
 fn string_concat_groups() {
     let mut lexer = Lexer::new();
-    let src = "(\"quz\" + \"baz\") + (\"quz\" + \"bar\")";
+    let src = "(\"quz\" + \"baz\") + (\"quz\" + \"bar\");";
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -111,7 +122,7 @@ fn string_concat_groups() {
 #[test]
 fn unary_expected_num() {
     let mut lexer = Lexer::new();
-    let src = r#"-"test""#;
+    let src = r#"-"test";"#;
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -124,9 +135,9 @@ fn unary_expected_num() {
 #[test]
 fn expect_both_nums_or_strings() {
     let mut lexer = Lexer::new();
-    let src = 
+    let src =
         r#"// lol comment here
-        "test" + 123.44"#;
+        "test" + 123.44;"#;
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
@@ -139,3 +150,20 @@ fn expect_both_nums_or_strings() {
     )
 }
 
+#[test]
+fn print() {
+    let mut lexer = Lexer::new();
+    let src =
+        r#"// lol comment here
+        "print 123.44;"#;
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let ast = parser.parse().unwrap();
+    let res = ast.eval().unwrap();
+
+    assert_eq!(
+        res,
+        ""
+    )
+}

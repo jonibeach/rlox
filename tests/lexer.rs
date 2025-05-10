@@ -56,14 +56,17 @@ fn string_fails() {
 }
 
 #[test]
-fn ue7() {
+fn unterminated_string() {
     let mut lexer = Lexer::new();
-    let src = include_str!("ue7.lox");
+    let src = "\"baz";
     lexer.lex(src);
+
+    assert_eq!(lexer.tokens(), [].as_slice());
+
     assert_eq!(
-        lexer.tokens(),
-        [Symbol::new(0, Token::String("hello")),].as_slice()
-    );
+        lexer.errors(),
+        [Symbol::new(0, Error::UnterminatedString)].as_slice()
+    )
 }
 
 #[test]

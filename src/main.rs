@@ -40,15 +40,23 @@ fn main() {
             }
         }
         "parse" => {
-            let parser = Parser::new(lexer.tokens());
+            if !lexer.errors().is_empty() {
+                std::process::exit(65)
+            }
+            let parser = Parser::no_ending_semicolons(lexer.tokens());
             let ast = match parser.parse() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
             };
-            println!("{ast}");
+            for stmt in ast.stmts() {
+                println!("{stmt}");
+            }
         }
         "evaluate" => {
-            let parser = Parser::new(lexer.tokens());
+            if !lexer.errors().is_empty() {
+                std::process::exit(65)
+            }
+            let parser = Parser::no_ending_semicolons(lexer.tokens());
             let ast = match parser.parse() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
@@ -61,8 +69,25 @@ fn main() {
                 }
             }
         }
+        "run" => {
+            if !lexer.errors().is_empty() {
+                std::process::exit(65)
+            }
+            let parser = Parser::new(lexer.tokens());
+            let ast = match parser.parse() {
+                Ok(ast) => ast,
+                Err(..) => std::process::exit(65),
+            };
+            match ast.run() {
+                Ok(..) => {}
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(70)
+                }
+            }
+        }
         _ => {
             eprintln!("Unknown command: {}", command);
         }
-    }
+    };
 }
