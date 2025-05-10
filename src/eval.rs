@@ -1,22 +1,24 @@
-use crate::parser::{Expr, FactorOp, Primary, TermOp, UnaryOp};
+use crate::parser::{CmpOp, EqOp, Expr, FactorOp, Primary, TermOp, UnaryOp};
 
 #[derive(Debug)]
 pub enum Error {
-    InvalidMathOperands,
+    InvalidMathOperand,
+    CannotConvertToString,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl<'src> Expr<'src> {
     pub fn eval(&self) -> Result<String> {
+        eprintln!("eval");
         let res = match self {
-            Self::Equality(..) => unimplemented!(),
-            Self::Cmp(..) => unimplemented!(),
+            Self::Equality(..) => self.truthiness()?.to_string(),
+            Self::Cmp(..) => self.truthiness()?.to_string(),
             Self::Term(..) => self.as_num()?.to_string(),
             Self::Factor(..) => self.as_num()?.to_string(),
-            Self::Unary(op, _) => match op {
-                UnaryOp::Not => unimplemented!(),
-                UnaryOp::Neg => self.as_num()?.to_string(),
+            Self::Unary(op, i) => match op {
+                UnaryOp::Not => (!i.truthiness()?).to_string(),
+                UnaryOp::Neg => (-i.as_num()?).to_string(),
             },
             Self::Primary(p) => match p {
                 Primary::Bool(bool) => bool.to_string(),
@@ -29,10 +31,12 @@ impl<'src> Expr<'src> {
 
         Ok(res)
     }
+
     fn as_num(&self) -> Result<f64> {
+        eprintln!("as num");
         match self {
-            Self::Equality(..) => unimplemented!(),
-            Self::Cmp(..) => unimplemented!(),
+            Self::Equality(..) => Err(Error::InvalidMathOperand),
+            Self::Cmp(..) => Err(Error::InvalidMathOperand),
             Self::Term(a, op, b) => match op {
                 TermOp::Add => Ok(a.as_num()? + b.as_num()?),
                 TermOp::Sub => Ok(a.as_num()? - b.as_num()?),
@@ -42,16 +46,79 @@ impl<'src> Expr<'src> {
                 FactorOp::Mul => Ok(a.as_num()? * b.as_num()?),
             },
             Self::Unary(op, i) => match op {
-                UnaryOp::Not => unimplemented!(),
+                UnaryOp::Not => Err(Error::InvalidMathOperand),
                 UnaryOp::Neg => Ok(-i.as_num()?),
             },
             Self::Primary(p) => match p {
-                Primary::Bool(_) => Err(Error::InvalidMathOperands),
+                Primary::Bool(_) => Err(Error::InvalidMathOperand),
                 Primary::Group(i) => i.as_num(),
-                Primary::Nil => Err(Error::InvalidMathOperands),
+                Primary::Nil => Err(Error::InvalidMathOperand),
                 Primary::Number(n) => Ok(n.into()),
-                Primary::String(_) => Err(Error::InvalidMathOperands),
+                Primary::String(_) => Err(Error::InvalidMathOperand),
             },
         }
+    }
+
+    fn as_str(&self) -> Result<String> {
+        eprintln!("as str");
+        match self {
+            Self::Term(a, op, b) => {
+                if let (Ok(a), Ok(b), TermOp::Add) = (a.as_str(), b.as_str(), op) {
+                    return Ok(a + &b);
+                }
+            }
+            Self::Primary(p) => match p {
+                Primary::String(s) => return Ok(s.to_string()),
+                _ => {}
+            },
+            _ => {}
+        };
+
+        Err(Error::CannotConvertToString)
+    }
+
+    fn truthiness(&self) -> Result<bool> {
+        eprintln!("truthiness");
+        let res = match self {
+            Self::Equality(a, op, b) => {
+                if let (Ok(a), Ok(b)) = (a.as_num(), b.as_num()) {
+                    match op {
+                        EqOp::Eq => a == b,
+                        EqOp::Neq => a != b,
+                    }
+                } else if let (Ok(a), Ok(b)) = (a.as_str(), b.as_str()) {
+                    match op {
+                        EqOp::Eq => a == b,
+                        EqOp::Neq => a == b,
+                    }
+                } else {
+                    match op {
+                        EqOp::Eq => a.truthiness()? == b.truthiness()?,
+                        EqOp::Neq => a.truthiness()? == b.truthiness()?,
+                    }
+                }
+            }
+            Self::Cmp(a, op, b) => match op {
+                CmpOp::Gt => a.as_num()? > b.as_num()?,
+                CmpOp::Gte => a.as_num()? >= b.as_num()?,
+                CmpOp::Lt => a.as_num()? < b.as_num()?,
+                CmpOp::Lte => a.as_num()? <= b.as_num()?,
+            },
+            Self::Term(..) => true,
+            Self::Factor(..) => true,
+            Self::Unary(op, i) => match op {
+                UnaryOp::Not => !i.truthiness()?,
+                UnaryOp::Neg => i.truthiness()?,
+            },
+            Self::Primary(p) => match p {
+                Primary::Bool(i) => *i,
+                Primary::Group(i) => i.truthiness()?,
+                Primary::Nil => false,
+                Primary::Number(..) => true,
+                Primary::String(..) => true,
+            },
+        };
+
+        Ok(res)
     }
 }
