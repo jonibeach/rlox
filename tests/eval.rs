@@ -78,4 +78,28 @@ fn neg_numbers_2() {
     assert_eq!(res, "-89")
 }
 
+#[test]
+fn string_concat() {
+    let mut lexer = Lexer::new();
+    let src = "\"hello\"+\"hello\"";
+    lexer.lex(src);
 
+    let parser = Parser::new(lexer.tokens());
+    let ast = parser.parse().unwrap();
+    let res = ast.eval().unwrap();
+
+    assert_eq!(res, "hellohello")
+}
+
+#[test]
+fn string_concat_groups() {
+    let mut lexer = Lexer::new();
+    let src = "(\"quz\" + \"baz\") + (\"quz\" + \"bar\")";
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let ast = parser.parse().unwrap();
+    let res = ast.eval().unwrap();
+
+    assert_eq!(res, "quzbazquzbar")
+}

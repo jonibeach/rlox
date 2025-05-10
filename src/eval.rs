@@ -10,11 +10,13 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 impl<'src> Expr<'src> {
     pub fn eval(&self) -> Result<String> {
-        eprintln!("eval");
+        eprintln!("eval {self}");
         let res = match self {
             Self::Equality(..) => self.truthiness()?.to_string(),
             Self::Cmp(..) => self.truthiness()?.to_string(),
-            Self::Term(..) => self.as_num()?.to_string(),
+            Self::Term(..) => self
+                .as_str()
+                .or_else(|_| self.as_num().map(|n| n.to_string()))?,
             Self::Factor(..) => self.as_num()?.to_string(),
             Self::Unary(op, i) => match op {
                 UnaryOp::Not => (!i.truthiness()?).to_string(),
@@ -33,7 +35,7 @@ impl<'src> Expr<'src> {
     }
 
     fn as_num(&self) -> Result<f64> {
-        eprintln!("as num");
+        eprintln!("as num {self}");
         match self {
             Self::Equality(..) => Err(Error::InvalidMathOperand),
             Self::Cmp(..) => Err(Error::InvalidMathOperand),
@@ -60,15 +62,17 @@ impl<'src> Expr<'src> {
     }
 
     fn as_str(&self) -> Result<String> {
-        eprintln!("as str");
+        eprintln!("as str {self}");
         match self {
             Self::Term(a, op, b) => {
                 if let (Ok(a), Ok(b), TermOp::Add) = (a.as_str(), b.as_str(), op) {
+                    eprintln!("both valid strings");
                     return Ok(a + &b);
                 }
             }
             Self::Primary(p) => match p {
                 Primary::String(s) => return Ok(s.to_string()),
+                Primary::Group(i) => return Ok(i.as_str()?),
                 _ => {}
             },
             _ => {}
@@ -78,7 +82,7 @@ impl<'src> Expr<'src> {
     }
 
     fn truthiness(&self) -> Result<bool> {
-        eprintln!("truthiness");
+        eprintln!("truthiness {self}");
         let res = match self {
             Self::Equality(a, op, b) => {
                 if let (Ok(a), Ok(b)) = (a.as_num(), b.as_num()) {
