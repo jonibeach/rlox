@@ -85,15 +85,19 @@ impl<'src> Expr<'src> {
         eprintln!("truthiness {self}");
         let res = match self {
             Self::Equality(a, op, b) => {
-                if let (Ok(a), Ok(b)) = (a.as_num(), b.as_num()) {
+                if let Ok(a) = a.as_num() {
+                    let Ok(b) = b.as_num() else { return Ok(false) };
+
                     match op {
                         EqOp::Eq => a == b,
                         EqOp::Neq => a != b,
                     }
-                } else if let (Ok(a), Ok(b)) = (a.as_str(), b.as_str()) {
+                } else if let Ok(a) = a.as_str() {
+                    let Ok(b) = b.as_str() else { return Ok(false) };
+
                     match op {
                         EqOp::Eq => a == b,
-                        EqOp::Neq => a == b,
+                        EqOp::Neq => a != b,
                     }
                 } else {
                     match op {
