@@ -45,8 +45,15 @@ fn main() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
             };
-
             println!("{ast}");
+        }
+        "evaluate" => {
+            let parser = Parser::new(lexer.tokens());
+            let ast = match parser.parse() {
+                Ok(ast) => ast,
+                Err(..) => std::process::exit(65),
+            };
+            println!("{}", ast.eval().unwrap());
         }
         _ => {
             eprintln!("Unknown command: {}", command);

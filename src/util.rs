@@ -16,6 +16,18 @@ impl From<f64> for Number {
     }
 }
 
+impl Into<f64> for &Number {
+    fn into(self) -> f64 {
+        self.0
+    }
+}
+
+impl Into<f64> for Number {
+    fn into(self) -> f64 {
+        self.0
+    }
+}
+
 impl Display for Number {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0.fract() == 0.0 {

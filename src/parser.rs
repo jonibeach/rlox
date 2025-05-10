@@ -242,7 +242,7 @@ impl<'src> ParserExpectedExt<'src, Symbol<Token<'src>>> for Option<Symbol<Token<
 ///
 /// See https://craftinginterpreters.com/parsing-expressions.html#ambiguity-and-the-parsing-game
 ///
-/// expression     → equality ;
+/// expression     → equality ("and" equality);
 ///
 /// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
 ///
