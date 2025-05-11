@@ -1,4 +1,4 @@
-use std::{cell::Cell, fmt::Display};
+use std::{borrow::Cow, cell::Cell, fmt::Display};
 
 use crate::{
     lexer::{Keyword, Symbol, Token},
@@ -85,14 +85,12 @@ impl_op_display! {
     EqOp::Neq => "!=",
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Primary<'src> {
     Bool(bool),
     Nil,
     Number(Number),
-    String(&'src str),
-    Group(Box<AstNode<'src>>),
-    VariableAccess(&'src str),
+    String(Cow<'src, str>),
 }
 
 impl Display for Primary<'_> {
@@ -102,14 +100,13 @@ impl Display for Primary<'_> {
             Self::Nil => f.write_str("nil"),
             Self::Number(n) => n.fmt(f),
             Self::String(s) => s.fmt(f),
-            Self::Group(g) => write!(f, "(group {g})",),
-            Self::VariableAccess(ident) => write!(f, "(varAccess {ident})"),
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum AstKind<'src> {
+    VarMut(&'src str, Box<AstNode<'src>>),
     VarDecl(&'src str, Box<AstNode<'src>>),
     Print(Box<AstNode<'src>>),
     Equality(Box<AstNode<'src>>, EqOp, Box<AstNode<'src>>),
@@ -117,6 +114,8 @@ pub enum AstKind<'src> {
     Term(Box<AstNode<'src>>, TermOp, Box<AstNode<'src>>),
     Factor(Box<AstNode<'src>>, FactorOp, Box<AstNode<'src>>),
     Unary(UnaryOp, Box<AstNode<'src>>),
+    Group(Box<AstNode<'src>>),
+    VariableAccess(&'src str),
     Primary(Primary<'src>),
 }
 
@@ -132,15 +131,16 @@ impl<'src> AstKind<'src> {
 impl Display for AstKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::VarDecl(name, val) => {
-                write!(f, "(varDecl {name} = {val})",)
-            }
+            Self::VarMut(ident, val) => write!(f, "(varMut {ident} {val})"),
+            Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
             Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Cmp(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Term(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Factor(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Unary(op, i) => write!(f, "({op} {i})"),
+            Self::Group(g) => write!(f, "(group {g})",),
+            Self::VariableAccess(ident) => write!(f, "(varAccess {ident})"),
             Self::Primary(primary) => primary.fmt(f),
         }
     }
@@ -168,6 +168,7 @@ impl<'src> AstNode<'src> {
     }
 }
 
+#[derive(Debug)]
 pub struct Program<'src> {
     declarations: Vec<AstNode<'src>>,
 }
@@ -214,6 +215,12 @@ pub struct Error<'src> {
     kind: ErrorKind<'src>,
 }
 
+impl<'src> Error<'src> {
+    pub fn new(line: usize, token: Option<Token<'src>>, kind: ErrorKind<'src>) -> Self {
+        Self { line, token, kind }
+    }
+}
+
 impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -239,6 +246,24 @@ type ParseResult<'src> = Result<'src, AstNode<'src>>;
 
 trait ParserExpectedExt<'src, T> {
     fn expected(self, expected: Expected<'src>, parser: &Parser<'src>) -> Result<'src, T>;
+}
+
+impl<'src> ParserExpectedExt<'src, Token<'src>> for Option<Token<'src>> {
+    fn expected(
+        self,
+        expected: Expected<'src>,
+        parser: &Parser<'src>,
+    ) -> Result<'src, Token<'src>> {
+        if let Some(i) = self {
+            Ok(i)
+        } else {
+            Err(Error {
+                line: parser.line(),
+                token: None,
+                kind: ErrorKind::Expected(expected),
+            })
+        }
+    }
 }
 
 impl<'src> ParserExpectedExt<'src, Symbol<Token<'src>>> for Option<Symbol<Token<'src>>> {
@@ -330,17 +355,23 @@ impl<'src> Parser<'src> {
     }
 
     fn peek(&self) -> AcceptToken<'src> {
-        // std::thread::sleep(std::time::Duration::from_millis(100));
         eprintln!("peek {:?}", self.get_token(self.idx.get()));
         self.get_token(self.idx.get())
     }
 
     fn next(&self) -> AcceptToken<'src> {
-        // std::thread::sleep(std::time::Duration::from_millis(100));
         let token = self.get_token(self.idx.get());
-        self.idx.set(self.idx.get() + 1);
+
+        if token.is_some() {
+            self.idx.set(self.idx.get() + 1);
+        }
 
         token
+    }
+
+    fn prev(&self) -> AcceptToken<'src> {
+        self.idx.set(self.idx.get() - 1);
+        self.get_token(self.idx.get())
     }
 
     fn accept(&self, token: Token<'src>) -> AcceptToken<'src> {
@@ -384,42 +415,60 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_var_decl(&self) -> ParseResult<'src> {
-        self.expect(Token::Keyword(Keyword::Var))?;
         eprintln!("parsing var decl");
+        let nexts = [self.next(), self.next(), self.next()];
+        let expected_token = match nexts {
+            [Some(Token::Keyword(Keyword::Var)), Some(Token::Identifier(ident)), Some(Token::Equal)] =>
+            {
+                let value = self.parse_expr()?;
+                self.expect(Token::Semicolon)?;
 
-        let ident = match self.peek() {
-            Some(Token::Identifier(ident)) => ident,
-            got => {
-                return Err(Error {
-                    line: self.line(),
-                    token: got,
-                    kind: ErrorKind::Expected(Expected::Token(Token::Identifier("ANY_IDENT"))),
-                })
+                eprintln!("got declr with value {value}");
+
+                return Ok(AstKind::VarDecl(ident, value.into()).into_ast(self));
             }
+            [Some(Token::Keyword(Keyword::Var)), Some(Token::Identifier(ident)), Some(last)] => {
+                if let Token::Semicolon = last {
+                    return Ok(AstKind::VarDecl(
+                        ident,
+                        AstKind::Primary(Primary::Nil).into_ast(self).into(),
+                    )
+                    .into_ast(self));
+                } else {
+                    Token::Semicolon
+                }
+            }
+            [Some(Token::Identifier(ident)), Some(Token::Equal), Some(_)] => {
+                self.prev().unwrap();
+
+                let value = self.parse_expr()?;
+                self.expect(Token::Semicolon)?;
+                eprintln!("got mutation of var {ident} = {value}");
+
+                return Ok(AstKind::VarMut(ident, value.into()).into_ast(self));
+            }
+            _ => Token::Keyword(Keyword::Var),
         };
 
-        self.next().unwrap();
+        let num = nexts.iter().filter(|n| n.is_some()).count();
+        let mut token = None;
 
-        eprintln!("got ident {ident}");
+        eprintln!(
+            "didn't get var declr, going back {num} tokens, currently at {:?}",
+            self.peek()
+        );
 
-        if let Some(Token::Semicolon) = self.peek() {
-            self.next().unwrap();
-            eprintln!("got declr without value");
-            return Ok(AstKind::VarDecl(
-                ident,
-                AstKind::Primary(Primary::Nil).into_ast(self).into(),
-            )
-            .into_ast(self));
+        for _ in 0..num {
+            token = self.prev();
         }
 
-        self.expect(Token::Equal)?;
+        eprintln!("after going back at {:?}", self.peek());
 
-        let value = self.parse_expr()?;
-        self.expect(Token::Semicolon)?;
-
-        eprintln!("got declr with value {value}");
-
-        Ok(AstKind::VarDecl(ident, value.into()).into_ast(self))
+        Err(Error {
+            line: self.line(),
+            token,
+            kind: ErrorKind::Expected(Expected::Token(expected_token)),
+        })
     }
 
     fn parse_stmt(&self) -> ParseResult<'src> {
@@ -567,25 +616,27 @@ impl<'src> Parser<'src> {
 
         eprintln!("parsing group DONE");
 
-        Ok(AstKind::Primary(Primary::Group(inner.into())).into_ast(self))
+        Ok(AstKind::Group(inner.into()).into_ast(self))
     }
 
     /// Accepts a primary
     fn parse_primary(&self) -> ParseResult<'src> {
-        let next = self.peek_symbol().expected(Expected::Expr, self)?.token();
+        let next = self.next().expected(Expected::Expr, self)?;
         eprintln!("parsing primary {next}");
 
         let ast = match next {
             Token::Number(n, _) => Primary::Number(n),
-            Token::String(s) => Primary::String(s),
+            Token::String(s) => Primary::String(Cow::Borrowed(s)),
             Token::Keyword(Keyword::True) => Primary::Bool(true),
             Token::Keyword(Keyword::False) => Primary::Bool(false),
             Token::Keyword(Keyword::Nil) => Primary::Nil,
-            Token::Identifier(i) => Primary::VariableAccess(i),
-            _ => return self.parse_group(),
+            Token::Identifier(i) => return Ok(AstKind::VariableAccess(i).into_ast(self)),
+            _ => {
+                self.prev().unwrap();
+                return self.parse_group();
+            }
         };
 
-        self.next().unwrap();
         eprintln!("accepted primary {ast}");
 
         Ok(AstKind::Primary(ast).into_ast(self))

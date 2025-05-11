@@ -21,10 +21,15 @@ fn bool() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
+
+    assert_eq!(
+        format!("{}", program.declarations().iter().next().unwrap()),
+        "true"
+    );
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "true")
+    assert_eq!(res, "true")
 }
 
 #[test]
@@ -38,7 +43,7 @@ fn nil() {
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "nil")
+    assert_eq!(res, "nil")
 }
 
 #[test]
@@ -52,7 +57,7 @@ fn unarys() {
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "true")
+    assert_eq!(res, "true")
 }
 
 #[test]
@@ -66,7 +71,7 @@ fn numbers() {
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "91")
+    assert_eq!(res, "91")
 }
 
 #[test]
@@ -80,7 +85,7 @@ fn neg_number() {
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "-2")
+    assert_eq!(res, "-2")
 }
 
 #[test]
@@ -94,7 +99,7 @@ fn neg_numbers_2() {
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "-89")
+    assert_eq!(res, "-89")
 }
 
 #[test]
@@ -108,7 +113,7 @@ fn string_concat() {
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "hellohello")
+    assert_eq!(res, "hellohello")
 }
 
 #[test]
@@ -122,7 +127,7 @@ fn string_concat_groups() {
     let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res.unwrap(), "quzbazquzbar")
+    assert_eq!(res, "quzbazquzbar")
 }
 
 #[test]
@@ -282,5 +287,42 @@ fn basic_string_vars() {
 
     assert_eq!(lines.next().unwrap(), (82 * 2).to_string());
     assert_eq!(lines.next().unwrap(), (82 * 3).to_string());
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn basic_var_reassignment() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        var baz = 82;
+        print baz;
+        baz = baz * 2;
+        print baz;
+        baz = baz * 2;
+        print baz;"#;
+
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut declrs = program.declarations().iter();
+
+    assert_eq!(format!("{}", declrs.next().unwrap()), "(varDecl baz 82.0)");
+    assert_eq!(format!("{}", declrs.next().unwrap()), "(print (varAccess baz))");
+    assert_eq!(format!("{}", declrs.next().unwrap()), "(varMut baz (* (varAccess baz) 2.0))");
+    assert_eq!(format!("{}", declrs.next().unwrap()), "(print (varAccess baz))");
+    assert_eq!(format!("{}", declrs.next().unwrap()), "(varMut baz (* (varAccess baz) 2.0))");
+    assert_eq!(format!("{}", declrs.next().unwrap()), "(print (varAccess baz))");
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(&program, &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), 82.to_string());
+    assert_eq!(lines.next().unwrap(), (82 * 2).to_string());
+    assert_eq!(lines.next().unwrap(), (82 * 4).to_string());
     assert!(lines.next().is_none());
 }

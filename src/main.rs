@@ -64,7 +64,7 @@ fn main() {
             };
             let executor = Executor::with_stdout(&program);
             match executor.eval() {
-                Ok(res) => println!("{}", res.unwrap_or_default()),
+                Ok(res) => println!("{}", res),
                 Err(e) => {
                     eprintln!("{e}");
                     std::process::exit(70)

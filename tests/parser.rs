@@ -122,3 +122,19 @@ fn var() {
         r#"(print (varAccess x))"#
     )
 }
+
+#[test]
+fn empty_print_err() {
+    let mut lexer = Lexer::new();
+    let src = "print;";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse();
+    assert_eq!(
+        format!("{}", program.unwrap_err()),
+        "[line 1] Error at ';': Expect LEFT_PAREN."
+    );
+}
