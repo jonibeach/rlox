@@ -1,5 +1,5 @@
 use codecrafters_interpreter::{
-    eval::{Error, ErrorKind},
+    eval::{ErrorKind, Executor},
     lexer::{Keyword, Lexer, Symbol, Token},
     parser::Parser,
 };
@@ -22,8 +22,9 @@ fn bool() {
     );
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "true")
 }
@@ -35,8 +36,9 @@ fn nil() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "nil")
 }
@@ -48,8 +50,9 @@ fn unarys() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "true")
 }
@@ -61,8 +64,9 @@ fn numbers() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "91")
 }
@@ -74,8 +78,9 @@ fn neg_number() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "-2")
 }
@@ -87,8 +92,9 @@ fn neg_numbers_2() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "-89")
 }
@@ -100,8 +106,9 @@ fn string_concat() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "hellohello")
 }
@@ -113,8 +120,9 @@ fn string_concat_groups() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let res = executor.eval().unwrap();
 
     assert_eq!(res, "quzbazquzbar")
 }
@@ -126,44 +134,102 @@ fn unary_expected_num() {
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let err = executor.eval().unwrap_err();
 
-    assert_eq!(res, Err(Error::new(0, ErrorKind::MustBeNumber)))
+    assert!(matches!(err.kind(), ErrorKind::MustBeNumber))
 }
 
 #[test]
 fn expect_both_nums_or_strings() {
     let mut lexer = Lexer::new();
-    let src =
-        r#"// lol comment here
+    let src = r#"// lol comment here
         "test" + 123.44;"#;
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval();
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program);
+    let err = executor.eval().unwrap_err();
 
-    assert_eq!(
-        res,
-        Err(Error::new(1, ErrorKind::BothMustBeNumbersOrStrings))
-    )
+    assert_eq!(err.line(), 1);
+    assert!(matches!(err.kind(), ErrorKind::BothMustBeNumbersOrStrings))
 }
 
 #[test]
 fn print() {
     let mut lexer = Lexer::new();
-    let src =
-        r#"// lol comment here
-        "print 123.44;"#;
+    let src = r#"
+        // lol comment here
+        print 123.44;"#;
+
+    lexer.lex(src);
+    assert_eq!(
+        lexer.tokens(),
+        [
+            Symbol::new(2, Token::Keyword(Keyword::Print)),
+            Symbol::new(2, Token::Number(123.44.into(), "123.44")),
+            Symbol::new(2, Token::Semicolon)
+        ]
+        .as_slice()
+    );
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    assert_eq!(
+        format!("{}", program.stmts().iter().next().unwrap()),
+        "(print 123.44)"
+    );
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(program, &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    assert_eq!(stdout.lines().next().unwrap(), "123.44");
+}
+
+#[test]
+fn multiline_with_not_ascii() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+    // This program prints the result of a comparison operation
+    // It also tests multi-line strings and non-ASCII characters
+    print false != false;
+
+    print "53
+    17
+    98
+    ";
+
+    print "There should be an empty line above this.";
+
+    print "(" + "" + ")";
+
+    print "non-ascii: ॐ";"#;
+
     lexer.lex(src);
 
     let parser = Parser::new(lexer.tokens());
-    let ast = parser.parse().unwrap();
-    let res = ast.eval().unwrap();
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(program, &mut stdout);
+    executor.run().unwrap();
 
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "false");
+    assert_eq!(lines.next().unwrap(), "53");
+    assert_eq!(lines.next().unwrap().trim(), "17");
+    assert_eq!(lines.next().unwrap().trim(), "98");
+    assert_eq!(lines.next().unwrap().trim(), "");
     assert_eq!(
-        res,
-        ""
-    )
+        lines.next().unwrap(),
+        "There should be an empty line above this."
+    );
+    assert_eq!(lines.next().unwrap(), "()");
+    assert_eq!(lines.next().unwrap(), "non-ascii: ॐ");
+    assert!(lines.next().is_none());
 }

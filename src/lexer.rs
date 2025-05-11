@@ -27,6 +27,7 @@ impl<'src> Lexer<'src> {
         let mut next = chars.next();
 
         while let Some((pos, c)) = next {
+            eprintln!("token {pos} {c}");
             if c == '\n' {
                 line += 1;
                 next = chars.next();
@@ -103,7 +104,7 @@ impl<'src> Lexer<'src> {
                                     line += 1;
                                 }
 
-                                end_idx += 1;
+                                end_idx += c.len_utf8();
                             }
                             None => {
                                 add_error!(Error::UnterminatedString);

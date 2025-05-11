@@ -1,20 +1,31 @@
-use std::fmt::Display;
+use std::{cell::RefCell, fmt::Display, io::Write};
 
 use crate::parser::{
     CmpOp, EqOp, Expr, ExprKind, FactorOp, Primary, Program, Stmt, StmtKind, TermOp, UnaryOp,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum ErrorKind {
     MustBeNumber,
     BothMustBeNumbers,
     BothMustBeNumbersOrStrings,
+    Io(std::io::Error),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Error {
     line: usize,
     kind: ErrorKind,
+}
+
+impl Error {
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn kind(&self) -> &ErrorKind {
+        &self.kind
+    }
 }
 
 impl Error {
@@ -29,19 +40,41 @@ impl Display for Error {
             ErrorKind::MustBeNumber => "Operand must be a number.",
             ErrorKind::BothMustBeNumbers => "Operands must be numbers.",
             ErrorKind::BothMustBeNumbersOrStrings => "Operands must be two numbers or two strings.",
+            ErrorKind::Io(..) => "IO error",
         };
 
         writeln!(f, "{msg}")?;
         write!(f, "[line {}]", self.line + 1)
     }
 }
+
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl<'src> Program<'src> {
+pub struct Executor<'src, T> {
+    program: Program<'src>,
+    stdout: RefCell<T>,
+}
+
+impl<'src> Executor<'src, std::io::Stdout> {
+    pub fn with_stdout(program: Program<'src>) -> Self {
+        Self::new(program, std::io::stdout())
+    }
+}
+
+impl<'src, T: Write> Executor<'src, T> {
+    pub fn new(program: Program<'src>, stdout: T) -> Self {
+        Self {
+            program,
+            stdout: stdout.into(),
+        }
+    }
+
     pub fn eval(&self) -> Result<String> {
         let mut res = String::new();
-        for stmt in self.stmts() {
-            res = stmt.eval()?;
+        eprintln!("evaling program");
+        for stmt in self.program.stmts() {
+            eprintln!("evaling stmt {stmt}");
+            res = self.eval_stmt(stmt)?;
         }
 
         Ok(res)
@@ -52,14 +85,17 @@ impl<'src> Program<'src> {
 
         Ok(())
     }
-}
 
-impl<'src> Stmt<'src> {
-    fn eval(&self) -> Result<String> {
-        match self.kind() {
+    fn eval_stmt(&self, stmt: &Stmt<'src>) -> Result<String> {
+        match stmt.kind() {
             StmtKind::Expr(expr) => expr.eval(),
             StmtKind::Print(expr) => {
-                println!("{}", expr.eval()?);
+                {
+                    let mut stdout = self.stdout.borrow_mut();
+                    writeln!(stdout, "{}", expr.eval()?)
+                        .map_err(|io| Error::new(stmt.line(), ErrorKind::Io(io)))?;
+                }
+
                 Ok(String::new())
             }
         }
@@ -177,7 +213,7 @@ impl<'src> Expr<'src> {
                 } else {
                     match op {
                         EqOp::Eq => a.truthiness()? == b.truthiness()?,
-                        EqOp::Neq => a.truthiness()? == b.truthiness()?,
+                        EqOp::Neq => a.truthiness()? != b.truthiness()?,
                     }
                 }
             }

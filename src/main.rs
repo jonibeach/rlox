@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 
+use codecrafters_interpreter::eval::Executor;
 use codecrafters_interpreter::lexer::Lexer;
 use codecrafters_interpreter::parser::Parser;
 
@@ -57,11 +58,12 @@ fn main() {
                 std::process::exit(65)
             }
             let parser = Parser::no_ending_semicolons(lexer.tokens());
-            let ast = match parser.parse() {
-                Ok(ast) => ast,
+            let program = match parser.parse() {
+                Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            match ast.eval() {
+            let executor = Executor::with_stdout(program);
+            match executor.eval() {
                 Ok(res) => println!("{res}"),
                 Err(e) => {
                     eprintln!("{e}");
@@ -74,11 +76,12 @@ fn main() {
                 std::process::exit(65)
             }
             let parser = Parser::new(lexer.tokens());
-            let ast = match parser.parse() {
-                Ok(ast) => ast,
+            let program = match parser.parse() {
+                Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            match ast.run() {
+            let executor = Executor::with_stdout(program);
+            match executor.run() {
                 Ok(..) => {}
                 Err(e) => {
                     eprintln!("{e}");
