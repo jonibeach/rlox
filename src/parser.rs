@@ -106,7 +106,7 @@ impl Display for Primary<'_> {
 
 #[derive(Debug, PartialEq)]
 pub enum AstKind<'src> {
-    VarMut(&'src str, Box<AstNode<'src>>),
+    VarAssign(&'src str, Box<AstNode<'src>>),
     VarDecl(&'src str, Box<AstNode<'src>>),
     Print(Box<AstNode<'src>>),
     Equality(Box<AstNode<'src>>, EqOp, Box<AstNode<'src>>),
@@ -131,7 +131,7 @@ impl<'src> AstKind<'src> {
 impl Display for AstKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::VarMut(ident, val) => write!(f, "(varMut {ident} {val})"),
+            Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
             Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
@@ -438,15 +438,6 @@ impl<'src> Parser<'src> {
                     Token::Semicolon
                 }
             }
-            [Some(Token::Identifier(ident)), Some(Token::Equal), Some(_)] => {
-                self.prev().unwrap();
-
-                let value = self.parse_expr()?;
-                self.expect(Token::Semicolon)?;
-                eprintln!("got mutation of var {ident} = {value}");
-
-                return Ok(AstKind::VarMut(ident, value.into()).into_ast(self));
-            }
             _ => Token::Keyword(Keyword::Var),
         };
 
@@ -630,8 +621,17 @@ impl<'src> Parser<'src> {
             Token::Keyword(Keyword::True) => Primary::Bool(true),
             Token::Keyword(Keyword::False) => Primary::Bool(false),
             Token::Keyword(Keyword::Nil) => Primary::Nil,
-            Token::Identifier(i) => return Ok(AstKind::VariableAccess(i).into_ast(self)),
-            _ => {
+            Token::Identifier(i) => {
+                if let Some(Token::Equal) = self.peek() {
+                    self.next().unwrap();
+                    let inner = self.parse_expr()?;
+
+                    return Ok(AstKind::VarAssign(i, inner.into()).into_ast(self));
+                } else {
+                    return Ok(AstKind::VariableAccess(i).into_ast(self));
+                }
+            }
+            _ => { 
                 self.prev().unwrap();
                 return self.parse_group();
             }

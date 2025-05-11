@@ -308,11 +308,26 @@ fn basic_var_reassignment() {
     let mut declrs = program.declarations().iter();
 
     assert_eq!(format!("{}", declrs.next().unwrap()), "(varDecl baz 82.0)");
-    assert_eq!(format!("{}", declrs.next().unwrap()), "(print (varAccess baz))");
-    assert_eq!(format!("{}", declrs.next().unwrap()), "(varMut baz (* (varAccess baz) 2.0))");
-    assert_eq!(format!("{}", declrs.next().unwrap()), "(print (varAccess baz))");
-    assert_eq!(format!("{}", declrs.next().unwrap()), "(varMut baz (* (varAccess baz) 2.0))");
-    assert_eq!(format!("{}", declrs.next().unwrap()), "(print (varAccess baz))");
+    assert_eq!(
+        format!("{}", declrs.next().unwrap()),
+        "(print (varAccess baz))"
+    );
+    assert_eq!(
+        format!("{}", declrs.next().unwrap()),
+        "(varAssign baz (* (varAccess baz) 2.0))"
+    );
+    assert_eq!(
+        format!("{}", declrs.next().unwrap()),
+        "(print (varAccess baz))"
+    );
+    assert_eq!(
+        format!("{}", declrs.next().unwrap()),
+        "(varAssign baz (* (varAccess baz) 2.0))"
+    );
+    assert_eq!(
+        format!("{}", declrs.next().unwrap()),
+        "(print (varAccess baz))"
+    );
 
     let mut stdout: Vec<u8> = Vec::new();
     let executor = Executor::new(&program, &mut stdout);
@@ -324,5 +339,29 @@ fn basic_var_reassignment() {
     assert_eq!(lines.next().unwrap(), 82.to_string());
     assert_eq!(lines.next().unwrap(), (82 * 2).to_string());
     assert_eq!(lines.next().unwrap(), (82 * 4).to_string());
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn multi_variable_assignment() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        var a;
+        var b = 2;
+        var a = b = 1;
+        print a;"#;
+
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(&program, &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "1");
     assert!(lines.next().is_none());
 }

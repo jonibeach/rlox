@@ -139,7 +139,7 @@ where
 
                 Primary::Bool(true)
             }
-            AstKind::VarMut(ident, i) => {
+            AstKind::VarAssign(ident, i) => {
                 let new_val = self.eval_node(i)?;
 
                 {
@@ -147,10 +147,10 @@ where
                     let var = global_vars
                         .get_mut(ident)
                         .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(ident)))?;
-                    *var = new_val;
+                    *var = new_val.clone();
                 }
 
-                Primary::Bool(true)
+                new_val
             }
             AstKind::Print(i) => {
                 let mut stdout = self.stdout.borrow_mut();
@@ -257,7 +257,7 @@ where
         eprintln!("truthiness {node}");
         let res = match node.kind() {
             AstKind::VarDecl(..) => true,
-            AstKind::VarMut(..) => true,
+            AstKind::VarAssign(_, i) => self.truthiness(i)?,
             AstKind::Print(..) => true,
             AstKind::Equality(a, op, b) => {
                 if let Ok(a) = self.as_num(a) {

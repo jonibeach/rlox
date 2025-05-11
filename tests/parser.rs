@@ -138,3 +138,20 @@ fn empty_print_err() {
         "[line 1] Error at ';': Expect LEFT_PAREN."
     );
 }
+
+#[test]
+fn var_assign() {
+    let mut lexer = Lexer::new();
+    let src = "var a = 2; var b = 3; var c = a = b = 2;";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut declarations = program.declarations().iter();
+
+    assert_eq!(format!("{}", declarations.next().unwrap()), "(varDecl a 2.0)");
+    assert_eq!(format!("{}", declarations.next().unwrap()), "(varDecl b 3.0)");
+    assert_eq!(format!("{}", declarations.next().unwrap()), "(varDecl c (varAssign a (varAssign b 2.0)))");
+}
