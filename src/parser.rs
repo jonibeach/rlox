@@ -110,7 +110,7 @@ impl Display for Primary<'_> {
 
 #[derive(Debug, PartialEq)]
 pub enum AstKind<'src> {
-    VarDecl(&'src str, Option<Box<AstNode<'src>>>),
+    VarDecl(&'src str, Box<AstNode<'src>>),
     Print(Box<AstNode<'src>>),
     Equality(Box<AstNode<'src>>, EqOp, Box<AstNode<'src>>),
     Cmp(Box<AstNode<'src>>, CmpOp, Box<AstNode<'src>>),
@@ -133,15 +133,7 @@ impl Display for AstKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::VarDecl(name, val) => {
-                write!(
-                    f,
-                    "(varDecl {name}{})",
-                    if let Some(val) = val {
-                        format!(" {val}")
-                    } else {
-                        String::new()
-                    }
-                )
+                write!(f, "(varDecl {name} = {val})",)
             }
             Self::Print(i) => write!(f, "(print {i})"),
             Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
@@ -413,7 +405,11 @@ impl<'src> Parser<'src> {
         if let Some(Token::Semicolon) = self.peek() {
             self.next().unwrap();
             eprintln!("got declr without value");
-            return Ok(AstKind::VarDecl(ident, None).into_ast(self));
+            return Ok(AstKind::VarDecl(
+                ident,
+                AstKind::Primary(Primary::Nil).into_ast(self).into(),
+            )
+            .into_ast(self));
         }
 
         self.expect(Token::Equal)?;
@@ -423,7 +419,7 @@ impl<'src> Parser<'src> {
 
         eprintln!("got declr with value {value}");
 
-        Ok(AstKind::VarDecl(ident, Some(value.into())).into_ast(self))
+        Ok(AstKind::VarDecl(ident, value.into()).into_ast(self))
     }
 
     fn parse_stmt(&self) -> ParseResult<'src> {

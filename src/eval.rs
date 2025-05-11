@@ -40,7 +40,7 @@ impl Display for Error<'_> {
                 "Operands must be two numbers or two strings.".into()
             }
             ErrorKind::UndefinedVariable(ident) => {
-                format!("Access of undefined variable '{ident}'")
+                format!("Undefined variable '{ident}'.")
             }
             ErrorKind::Io(..) => "IO error".into(),
         };
@@ -55,7 +55,7 @@ pub type Result<'src, T> = std::result::Result<T, Error<'src>>;
 pub struct Executor<'src, 'p, T> {
     program: &'p Program<'src>,
     stdout: RefCell<T>,
-    global_vars: RefCell<HashMap<&'src str, Option<&'p AstNode<'src>>>>,
+    global_vars: RefCell<HashMap<&'src str, &'p AstNode<'src>>>,
 }
 
 impl<'src, 'p> Executor<'src, 'p, std::io::Stdout>
@@ -109,9 +109,8 @@ where
         ident: &'src str,
     ) -> Result<'src, &'p AstNode<'src>> {
         let global_vars = self.global_vars.borrow();
-        let var = global_vars
+        let var = *global_vars
             .get(ident)
-            .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(ident)))?
             .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(ident)))?;
 
         std::mem::drop(global_vars);
@@ -124,7 +123,7 @@ where
         let res = match node.kind() {
             AstKind::VarDecl(ident, i) => {
                 let mut global_vars = self.global_vars.borrow_mut();
-                global_vars.insert(ident, i.as_ref().map(Box::as_ref));
+                global_vars.insert(ident, i);
                 return Ok(None);
             }
             AstKind::Print(i) => {
@@ -154,20 +153,8 @@ where
                 Primary::Nil => String::from("nil"),
                 Primary::Number(_) => self.as_num(node)?.to_string(),
                 Primary::String(s) => s.to_string(),
-                Primary::VariableAccess(var) => {
-                    return self.eval_node({
-                        let global_vars = self.global_vars.borrow();
-                        let var = global_vars
-                            .get(var)
-                            .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(var)))?
-                            .ok_or_else(|| {
-                                self.err_inner(node, ErrorKind::UndefinedVariable(var))
-                            })?;
-
-                        std::mem::drop(global_vars);
-
-                        var
-                    })
+                Primary::VariableAccess(ident) => {
+                    return self.eval_node(self.resolve_var(node, ident)?)
                 }
             },
         };
