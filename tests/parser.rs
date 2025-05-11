@@ -10,7 +10,7 @@ fn group() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.stmts().first().unwrap()),
+        format!("{}", program.declarations().first().unwrap()),
         r#"(group (+ test 234.0))"#
     )
 }
@@ -27,7 +27,7 @@ fn group_in_group() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.stmts().first().unwrap()),
+        format!("{}", program.declarations().first().unwrap()),
         r#"(group (/ test (group (+ hello 555.111))))"#
     )
 }
@@ -44,7 +44,7 @@ fn negate_and_not() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.stmts().first().unwrap()),
+        format!("{}", program.declarations().first().unwrap()),
         r#"(group (! (group (+ 123.0 (- 55.03)))))"#
     )
 }
@@ -61,7 +61,7 @@ fn basic_expr() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.stmts().first().unwrap()),
+        format!("{}", program.declarations().first().unwrap()),
         r#"(/ (* 82.0 99.0) 18.0)"#,
     )
 }
@@ -78,7 +78,7 @@ fn nested_expr_pretty_basic_still_with_comments() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.stmts().first().unwrap()),
+        format!("{}", program.declarations().first().unwrap()),
         r#"(group (/ (* 77.0 (- 74.0)) (group (* 87.0 99.0))))"#,
     )
 }
@@ -95,7 +95,30 @@ fn basic_cmps_with_groups() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.stmts().first().unwrap()),
+        format!("{}", program.declarations().first().unwrap()),
         r#"(== (group (!= 94.0 25.0)) (group (>= (group (+ (- 39.0) 86.0)) (group (* 72.0 19.0)))))"#,
+    )
+}
+
+#[test]
+fn var() {
+    let mut lexer = Lexer::new();
+    let src = "var x = 10;\nprint x;";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut declarations = program.declarations().into_iter();
+
+    assert_eq!(
+        format!("{}", declarations.next().unwrap()),
+        r#"(varDecl x 10.0)"#
+    );
+
+    assert_eq!(
+        format!("{}", declarations.next().unwrap()),
+        r#"(print (varAccess x))"#
     )
 }

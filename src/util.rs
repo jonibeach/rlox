@@ -16,15 +16,15 @@ impl From<f64> for Number {
     }
 }
 
-impl Into<f64> for &Number {
-    fn into(self) -> f64 {
-        self.0
+impl From<&Number> for f64 {
+    fn from(value: &Number) -> Self {
+        value.0
     }
 }
 
-impl Into<f64> for Number {
-    fn into(self) -> f64 {
-        self.0
+impl From<Number> for f64 {
+    fn from(value: Number) -> Self {
+        value.0
     }
 }
 

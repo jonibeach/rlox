@@ -1,24 +1,23 @@
-use std::{cell::RefCell, fmt::Display, io::Write};
+use std::{cell::RefCell, collections::HashMap, fmt::Display, io::Write};
 
-use crate::parser::{
-    CmpOp, EqOp, Expr, ExprKind, FactorOp, Primary, Program, Stmt, StmtKind, TermOp, UnaryOp,
-};
+use crate::parser::{AstKind, AstNode, CmpOp, EqOp, FactorOp, Primary, Program, TermOp, UnaryOp};
 
 #[derive(Debug)]
-pub enum ErrorKind {
+pub enum ErrorKind<'src> {
     MustBeNumber,
     BothMustBeNumbers,
     BothMustBeNumbersOrStrings,
+    UndefinedVariable(&'src str),
     Io(std::io::Error),
 }
 
 #[derive(Debug)]
-pub struct Error {
+pub struct Error<'src> {
     line: usize,
-    kind: ErrorKind,
+    kind: ErrorKind<'src>,
 }
 
-impl Error {
+impl<'src> Error<'src> {
     pub fn line(&self) -> usize {
         self.line
     }
@@ -26,21 +25,24 @@ impl Error {
     pub fn kind(&self) -> &ErrorKind {
         &self.kind
     }
-}
 
-impl Error {
-    pub fn new(line: usize, kind: ErrorKind) -> Self {
+    pub fn new(line: usize, kind: ErrorKind<'src>) -> Self {
         Self { line, kind }
     }
 }
 
-impl Display for Error {
+impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self.kind {
-            ErrorKind::MustBeNumber => "Operand must be a number.",
-            ErrorKind::BothMustBeNumbers => "Operands must be numbers.",
-            ErrorKind::BothMustBeNumbersOrStrings => "Operands must be two numbers or two strings.",
-            ErrorKind::Io(..) => "IO error",
+            ErrorKind::MustBeNumber => "Operand must be a number.".into(),
+            ErrorKind::BothMustBeNumbers => "Operands must be numbers.".into(),
+            ErrorKind::BothMustBeNumbersOrStrings => {
+                "Operands must be two numbers or two strings.".into()
+            }
+            ErrorKind::UndefinedVariable(ident) => {
+                format!("Access of undefined variable '{ident}'")
+            }
+            ErrorKind::Io(..) => "IO error".into(),
         };
 
         writeln!(f, "{msg}")?;
@@ -48,140 +50,180 @@ impl Display for Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<'src, T> = std::result::Result<T, Error<'src>>;
 
-pub struct Executor<'src, T> {
-    program: Program<'src>,
+pub struct Executor<'src, 'p, T> {
+    program: &'p Program<'src>,
     stdout: RefCell<T>,
+    global_vars: RefCell<HashMap<&'src str, Option<&'p AstNode<'src>>>>,
 }
 
-impl<'src> Executor<'src, std::io::Stdout> {
-    pub fn with_stdout(program: Program<'src>) -> Self {
+impl<'src, 'p> Executor<'src, 'p, std::io::Stdout>
+where
+    'p: 'src,
+{
+    pub fn with_stdout(program: &'p Program<'src>) -> Self {
         Self::new(program, std::io::stdout())
     }
 }
 
-impl<'src, T: Write> Executor<'src, T> {
-    pub fn new(program: Program<'src>, stdout: T) -> Self {
+impl<'src, 'p, T: Write> Executor<'src, 'p, T>
+where
+    'p: 'src,
+{
+    pub fn new(program: &'p Program<'src>, stdout: T) -> Self {
         Self {
             program,
             stdout: stdout.into(),
+            global_vars: HashMap::new().into(),
         }
     }
 
-    pub fn eval(&self) -> Result<String> {
-        let mut res = String::new();
+    pub fn eval(&'src self) -> Result<'src, Option<String>> {
+        let mut res = None;
         eprintln!("evaling program");
-        for stmt in self.program.stmts() {
-            eprintln!("evaling stmt {stmt}");
-            res = self.eval_stmt(stmt)?;
+        for declr in self.program.declarations() {
+            eprintln!("evaling declr {declr}");
+            res = self.eval_node(declr)?;
         }
 
         Ok(res)
     }
 
-    pub fn run(&self) -> Result<()> {
+    pub fn run(&'src self) -> Result<'src, ()> {
         self.eval()?;
 
         Ok(())
     }
 
-    fn eval_stmt(&self, stmt: &Stmt<'src>) -> Result<String> {
-        match stmt.kind() {
-            StmtKind::Expr(expr) => expr.eval(),
-            StmtKind::Print(expr) => {
-                {
-                    let mut stdout = self.stdout.borrow_mut();
-                    writeln!(stdout, "{}", expr.eval()?)
-                        .map_err(|io| Error::new(stmt.line(), ErrorKind::Io(io)))?;
-                }
+    fn err_inner(&self, node: &'p AstNode<'src>, kind: ErrorKind<'src>) -> Error {
+        Error::new(node.line(), kind)
+    }
+    fn err<E>(&self, node: &'p AstNode<'src>, kind: ErrorKind<'src>) -> Result<E> {
+        Err(self.err_inner(node, kind))
+    }
 
-                Ok(String::new())
+    fn resolve_var(
+        &'src self,
+        node: &'p AstNode<'src>,
+        ident: &'src str,
+    ) -> Result<'src, &'p AstNode<'src>> {
+        let global_vars = self.global_vars.borrow();
+        let var = global_vars
+            .get(ident)
+            .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(ident)))?
+            .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(ident)))?;
+
+        std::mem::drop(global_vars);
+
+        Ok(var)
+    }
+
+    fn eval_node(&'src self, node: &'p AstNode<'src>) -> Result<'src, Option<String>> {
+        eprintln!("eval {node}");
+        let res = match node.kind() {
+            AstKind::VarDecl(ident, i) => {
+                let mut global_vars = self.global_vars.borrow_mut();
+                global_vars.insert(ident, i.as_ref().map(Box::as_ref));
+                return Ok(None);
             }
-        }
-    }
-}
-
-impl<'src> Expr<'src> {
-    fn err_inner(&self, kind: ErrorKind) -> Error {
-        Error {
-            line: self.line(),
-            kind,
-        }
-    }
-    fn err<T>(&self, kind: ErrorKind) -> Result<T> {
-        Err(self.err_inner(kind))
-    }
-
-    fn eval(&self) -> Result<String> {
-        eprintln!("eval {self}");
-        let res = match self.kind() {
-            ExprKind::Equality(..) => self.truthiness()?.to_string(),
-            ExprKind::Cmp(..) => self.truthiness()?.to_string(),
-            ExprKind::Term(..) => self.as_num().map(|n| n.to_string()).or_else(|_| {
-                self.as_string()
-                    .ok_or_else(|| self.err_inner(ErrorKind::BothMustBeNumbersOrStrings))
+            AstKind::Print(i) => {
+                let mut stdout = self.stdout.borrow_mut();
+                writeln!(stdout, "{}", self.eval_node(i)?.unwrap_or_default()).map_err(|io| {
+                    Error {
+                        line: i.line(),
+                        kind: ErrorKind::Io(io),
+                    }
+                })?;
+                return Ok(None);
+            }
+            AstKind::Equality(..) => self.truthiness(node)?.to_string(),
+            AstKind::Cmp(..) => self.truthiness(node)?.to_string(),
+            AstKind::Term(..) => self.as_num(node).map(|n| n.to_string()).or_else(|_| {
+                self.as_string(node)
+                    .ok_or_else(|| self.err_inner(node, ErrorKind::BothMustBeNumbersOrStrings))
             })?,
-            ExprKind::Factor(..) => self.as_num()?.to_string(),
-            ExprKind::Unary(op, i) => match op {
-                UnaryOp::Not => (!i.truthiness()?).to_string(),
-                UnaryOp::Neg => (-i.as_num()?).to_string(),
+            AstKind::Factor(..) => self.as_num(node)?.to_string(),
+            AstKind::Unary(op, i) => match op {
+                UnaryOp::Not => (!self.truthiness(i)?).to_string(),
+                UnaryOp::Neg => (-self.as_num(i)?).to_string(),
             },
-            ExprKind::Primary(p) => match p {
+            AstKind::Primary(p) => match p {
                 Primary::Bool(bool) => bool.to_string(),
-                Primary::Group(i) => return i.eval(),
+                Primary::Group(i) => return self.eval_node(i),
                 Primary::Nil => String::from("nil"),
-                Primary::Number(_) => self.as_num()?.to_string(),
+                Primary::Number(_) => self.as_num(node)?.to_string(),
                 Primary::String(s) => s.to_string(),
+                Primary::VariableAccess(var) => {
+                    return self.eval_node({
+                        let global_vars = self.global_vars.borrow();
+                        let var = global_vars
+                            .get(var)
+                            .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(var)))?
+                            .ok_or_else(|| {
+                                self.err_inner(node, ErrorKind::UndefinedVariable(var))
+                            })?;
+
+                        std::mem::drop(global_vars);
+
+                        var
+                    })
+                }
             },
         };
 
-        Ok(res)
+        Ok(Some(res))
     }
 
-    fn as_num(&self) -> Result<f64> {
-        eprintln!("as num {self}");
-        match self.kind() {
-            ExprKind::Equality(..) => self.err(ErrorKind::MustBeNumber),
-            ExprKind::Cmp(..) => self.err(ErrorKind::MustBeNumber),
-            ExprKind::Term(a, op, b) => match op {
-                TermOp::Add => Ok(a.as_num()? + b.as_num()?),
-                TermOp::Sub => Ok(a.as_num()? - b.as_num()?),
+    fn as_num(&'src self, node: &'p AstNode<'src>) -> Result<'src, f64> {
+        eprintln!("as num {node}");
+        match node.kind() {
+            AstKind::Term(a, op, b) => match op {
+                TermOp::Add => Ok(self.as_num(a)? + self.as_num(b)?),
+                TermOp::Sub => Ok(self.as_num(a)? - self.as_num(b)?),
             },
-            ExprKind::Factor(a, op, b) => {
-                if let (Ok(a), Ok(b)) = (a.as_num(), b.as_num()) {
+            AstKind::Factor(a, op, b) => {
+                if let (Ok(a), Ok(b)) = (self.as_num(a), self.as_num(b)) {
                     Ok(match op {
                         FactorOp::Mul => a * b,
                         FactorOp::Div => a / b,
                     })
                 } else {
-                    self.err(ErrorKind::BothMustBeNumbers)
+                    self.err(node, ErrorKind::BothMustBeNumbers)
                 }
             }
-            ExprKind::Unary(op, i) => match op {
-                UnaryOp::Not => self.err(ErrorKind::MustBeNumber),
-                UnaryOp::Neg => Ok(-i.as_num()?),
+            AstKind::Unary(op, i) => match op {
+                UnaryOp::Not => self.err(node, ErrorKind::MustBeNumber),
+                UnaryOp::Neg => Ok(-self.as_num(i)?),
             },
-            ExprKind::Primary(p) => match p {
-                Primary::Group(i) => i.as_num(),
+            AstKind::Primary(p) => match p {
+                Primary::Group(i) => self.as_num(i),
                 Primary::Number(n) => Ok(n.into()),
-                _ => self.err(ErrorKind::MustBeNumber),
+                Primary::VariableAccess(ident) => {
+                    return self.as_num(self.resolve_var(node, ident)?)
+                }
+                _ => self.err(node, ErrorKind::MustBeNumber),
             },
+            _ => self.err(node, ErrorKind::MustBeNumber),
         }
     }
 
-    fn as_string(&self) -> Option<String> {
-        eprintln!("as str {self}");
-        match self.kind() {
-            ExprKind::Term(a, op, b) => {
-                if let (Some(a), Some(b), TermOp::Add) = (a.as_string(), b.as_string(), op) {
+    fn as_string(&'src self, node: &'p AstNode<'src>) -> Option<String> {
+        eprintln!("as str {node}");
+        match node.kind() {
+            AstKind::Term(a, op, b) => {
+                if let (Some(a), Some(b), TermOp::Add) = (self.as_string(a), self.as_string(b), op)
+                {
                     eprintln!("both valid strings");
                     return Some(a + &b);
                 }
             }
-            ExprKind::Primary(p) => match p {
+            AstKind::Primary(p) => match p {
                 Primary::String(s) => return Some(s.to_string()),
-                Primary::Group(i) => return Some(i.as_string()?),
+                Primary::Group(i) => return self.as_string(i),
+                Primary::VariableAccess(ident) => {
+                    return self.as_string(self.resolve_var(node, ident).ok()?)
+                }
                 _ => {}
             },
             _ => {}
@@ -190,19 +232,23 @@ impl<'src> Expr<'src> {
         None
     }
 
-    fn truthiness(&self) -> Result<bool> {
-        eprintln!("truthiness {self}");
-        let res = match self.kind() {
-            ExprKind::Equality(a, op, b) => {
-                if let Ok(a) = a.as_num() {
-                    let Ok(b) = b.as_num() else { return Ok(false) };
+    fn truthiness(&'src self, node: &'p AstNode<'src>) -> Result<'src, bool> {
+        eprintln!("truthiness {node}");
+        let res = match node.kind() {
+            AstKind::VarDecl(..) => true,
+            AstKind::Print(..) => true,
+            AstKind::Equality(a, op, b) => {
+                if let Ok(a) = self.as_num(a) {
+                    let Ok(b) = self.as_num(b) else {
+                        return Ok(false);
+                    };
 
                     match op {
                         EqOp::Eq => a == b,
                         EqOp::Neq => a != b,
                     }
-                } else if let Some(a) = a.as_string() {
-                    let Some(b) = b.as_string() else {
+                } else if let Some(a) = self.as_string(a) {
+                    let Some(b) = self.as_string(b) else {
                         return Ok(false);
                     };
 
@@ -212,29 +258,32 @@ impl<'src> Expr<'src> {
                     }
                 } else {
                     match op {
-                        EqOp::Eq => a.truthiness()? == b.truthiness()?,
-                        EqOp::Neq => a.truthiness()? != b.truthiness()?,
+                        EqOp::Eq => self.truthiness(a)? == self.truthiness(b)?,
+                        EqOp::Neq => self.truthiness(a)? != self.truthiness(b)?,
                     }
                 }
             }
-            ExprKind::Cmp(a, op, b) => match op {
-                CmpOp::Gt => a.as_num()? > b.as_num()?,
-                CmpOp::Gte => a.as_num()? >= b.as_num()?,
-                CmpOp::Lt => a.as_num()? < b.as_num()?,
-                CmpOp::Lte => a.as_num()? <= b.as_num()?,
+            AstKind::Cmp(a, op, b) => match op {
+                CmpOp::Gt => self.as_num(a)? > self.as_num(b)?,
+                CmpOp::Gte => self.as_num(a)? >= self.as_num(b)?,
+                CmpOp::Lt => self.as_num(a)? < self.as_num(b)?,
+                CmpOp::Lte => self.as_num(a)? <= self.as_num(b)?,
             },
-            ExprKind::Term(..) => true,
-            ExprKind::Factor(..) => true,
-            ExprKind::Unary(op, i) => match op {
-                UnaryOp::Not => !i.truthiness()?,
-                UnaryOp::Neg => i.truthiness()?,
+            AstKind::Term(..) => true,
+            AstKind::Factor(..) => true,
+            AstKind::Unary(op, i) => match op {
+                UnaryOp::Not => !self.truthiness(i)?,
+                UnaryOp::Neg => self.truthiness(i)?,
             },
-            ExprKind::Primary(p) => match p {
+            AstKind::Primary(p) => match p {
                 Primary::Bool(i) => *i,
-                Primary::Group(i) => i.truthiness()?,
+                Primary::Group(i) => self.truthiness(i)?,
                 Primary::Nil => false,
                 Primary::Number(..) => true,
                 Primary::String(..) => true,
+                Primary::VariableAccess(ident) => {
+                    self.truthiness(self.resolve_var(node, ident)?)?
+                }
             },
         };
 

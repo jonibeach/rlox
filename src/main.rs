@@ -49,7 +49,7 @@ fn main() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
             };
-            for stmt in ast.stmts() {
+            for stmt in ast.declarations() {
                 println!("{stmt}");
             }
         }
@@ -62,9 +62,9 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let executor = Executor::with_stdout(program);
+            let executor = Executor::with_stdout(&program);
             match executor.eval() {
-                Ok(res) => println!("{res}"),
+                Ok(res) => println!("{}", res.unwrap_or_default()),
                 Err(e) => {
                     eprintln!("{e}");
                     std::process::exit(70)
@@ -80,7 +80,7 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let executor = Executor::with_stdout(program);
+            let executor = Executor::with_stdout(&program);
             match executor.run() {
                 Ok(..) => {}
                 Err(e) => {

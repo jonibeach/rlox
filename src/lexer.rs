@@ -27,7 +27,6 @@ impl<'src> Lexer<'src> {
         let mut next = chars.next();
 
         while let Some((pos, c)) = next {
-            eprintln!("token {pos} {c}");
             if c == '\n' {
                 line += 1;
                 next = chars.next();

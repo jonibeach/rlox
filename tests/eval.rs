@@ -10,8 +10,6 @@ fn bool() {
     let src = "true;";
     lexer.lex(src);
 
-    eprintln!("{:?}", lexer.tokens());
-
     assert_eq!(
         lexer.tokens(),
         [
@@ -23,10 +21,10 @@ fn bool() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "true")
+    assert_eq!(res.unwrap(), "true")
 }
 
 #[test]
@@ -37,10 +35,10 @@ fn nil() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "nil")
+    assert_eq!(res.unwrap(), "nil")
 }
 
 #[test]
@@ -51,10 +49,10 @@ fn unarys() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "true")
+    assert_eq!(res.unwrap(), "true")
 }
 
 #[test]
@@ -65,10 +63,10 @@ fn numbers() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "91")
+    assert_eq!(res.unwrap(), "91")
 }
 
 #[test]
@@ -79,10 +77,10 @@ fn neg_number() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "-2")
+    assert_eq!(res.unwrap(), "-2")
 }
 
 #[test]
@@ -93,10 +91,10 @@ fn neg_numbers_2() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "-89")
+    assert_eq!(res.unwrap(), "-89")
 }
 
 #[test]
@@ -107,10 +105,10 @@ fn string_concat() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "hellohello")
+    assert_eq!(res.unwrap(), "hellohello")
 }
 
 #[test]
@@ -121,10 +119,10 @@ fn string_concat_groups() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let res = executor.eval().unwrap();
 
-    assert_eq!(res, "quzbazquzbar")
+    assert_eq!(res.unwrap(), "quzbazquzbar")
 }
 
 #[test]
@@ -135,7 +133,7 @@ fn unary_expected_num() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let err = executor.eval().unwrap_err();
 
     assert!(matches!(err.kind(), ErrorKind::MustBeNumber))
@@ -150,7 +148,7 @@ fn expect_both_nums_or_strings() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(program);
+    let executor = Executor::with_stdout(&program);
     let err = executor.eval().unwrap_err();
 
     assert_eq!(err.line(), 1);
@@ -178,12 +176,12 @@ fn print() {
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     assert_eq!(
-        format!("{}", program.stmts().iter().next().unwrap()),
+        format!("{}", program.declarations().iter().next().unwrap()),
         "(print 123.44)"
     );
 
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program, &mut stdout);
+    let executor = Executor::new(&program, &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -214,7 +212,7 @@ fn multiline_with_not_ascii() {
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program, &mut stdout);
+    let executor = Executor::new(&program, &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -231,5 +229,58 @@ fn multiline_with_not_ascii() {
     );
     assert_eq!(lines.next().unwrap(), "()");
     assert_eq!(lines.next().unwrap(), "non-ascii: ॐ");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn basic_vars() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+    var test = "abc";
+
+    print test;
+    print test + test;
+    print test + "___" + test;"#;
+
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(&program, &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "abc");
+    assert_eq!(lines.next().unwrap(), "abcabc");
+    assert_eq!(lines.next().unwrap().trim(), "abc___abc");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn basic_string_vars() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        var baz = 82;
+        var world = 82;
+        print baz + world;
+        var quz = 82;
+        print baz + world + quz;"#;
+
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(&program, &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), (82 * 2).to_string());
+    assert_eq!(lines.next().unwrap(), (82 * 3).to_string());
     assert!(lines.next().is_none());
 }
