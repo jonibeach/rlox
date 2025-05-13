@@ -49,7 +49,7 @@ fn main() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
             };
-            for stmt in ast.declarations() {
+            for stmt in ast.blocks() {
                 println!("{stmt}");
             }
         }

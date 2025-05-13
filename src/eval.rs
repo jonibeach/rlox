@@ -82,7 +82,7 @@ where
     pub fn eval(&'src self) -> Result<'src, String> {
         let mut res = String::new();
         eprintln!("evaling program");
-        for declr in self.program.declarations() {
+        for declr in self.program.blocks() {
             eprintln!("evaling declr {declr}");
             res = Self::print_primary(&self.eval_node(declr)?);
         }
@@ -129,12 +129,20 @@ where
     fn eval_node(&'src self, node: &'p AstNode<'src>) -> Result<'src, Primary<'src>> {
         eprintln!("eval {node}");
         let primary = match node.kind() {
+            AstKind::Block(members) => {
+                let mut res = Primary::Nil;
+                for m in members {
+                    res = self.eval_node(m)?;
+                }
+
+                res
+            }
             AstKind::VarDecl(ident, i) => {
                 let val = self.eval_node(i)?;
 
                 {
                     let mut global_vars = self.global_vars.borrow_mut();
-                    global_vars.insert(ident, val);
+                    global_vars.insert(ident, val.clone());
                 }
 
                 Primary::Bool(true)
@@ -256,6 +264,7 @@ where
     fn truthiness(&'src self, node: &'p AstNode<'src>) -> Result<'src, bool> {
         eprintln!("truthiness {node}");
         let res = match node.kind() {
+            AstKind::Block(..) => true,
             AstKind::VarDecl(..) => true,
             AstKind::VarAssign(_, i) => self.truthiness(i)?,
             AstKind::Print(..) => true,

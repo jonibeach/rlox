@@ -23,7 +23,7 @@ fn bool() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.declarations().iter().next().unwrap()),
+        format!("{}", program.blocks().iter().next().unwrap()),
         "true"
     );
     let executor = Executor::with_stdout(&program);
@@ -181,7 +181,7 @@ fn print() {
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     assert_eq!(
-        format!("{}", program.declarations().iter().next().unwrap()),
+        format!("{}", program.blocks().iter().next().unwrap()),
         "(print 123.44)"
     );
 
@@ -251,6 +251,13 @@ fn basic_vars() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
+    let mut blocks = program.blocks().iter();
+
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl test abc)");
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (varAccess test))");
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (+ (varAccess test) (varAccess test)))");
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (+ (+ (varAccess test) ___) (varAccess test)))");
+
     let mut stdout: Vec<u8> = Vec::new();
     let executor = Executor::new(&program, &mut stdout);
     executor.run().unwrap();
@@ -305,27 +312,27 @@ fn basic_var_reassignment() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut declrs = program.declarations().iter();
+    let mut blocks = program.blocks().iter();
 
-    assert_eq!(format!("{}", declrs.next().unwrap()), "(varDecl baz 82.0)");
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl baz 82.0)");
     assert_eq!(
-        format!("{}", declrs.next().unwrap()),
+        format!("{}", blocks.next().unwrap()),
         "(print (varAccess baz))"
     );
     assert_eq!(
-        format!("{}", declrs.next().unwrap()),
+        format!("{}", blocks.next().unwrap()),
         "(varAssign baz (* (varAccess baz) 2.0))"
     );
     assert_eq!(
-        format!("{}", declrs.next().unwrap()),
+        format!("{}", blocks.next().unwrap()),
         "(print (varAccess baz))"
     );
     assert_eq!(
-        format!("{}", declrs.next().unwrap()),
+        format!("{}", blocks.next().unwrap()),
         "(varAssign baz (* (varAccess baz) 2.0))"
     );
     assert_eq!(
-        format!("{}", declrs.next().unwrap()),
+        format!("{}", blocks.next().unwrap()),
         "(print (varAccess baz))"
     );
 

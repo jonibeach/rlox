@@ -106,6 +106,7 @@ impl Display for Primary<'_> {
 
 #[derive(Debug, PartialEq)]
 pub enum AstKind<'src> {
+    Block(Vec<AstNode<'src>>),
     VarAssign(&'src str, Box<AstNode<'src>>),
     VarDecl(&'src str, Box<AstNode<'src>>),
     Print(Box<AstNode<'src>>),
@@ -131,6 +132,15 @@ impl<'src> AstKind<'src> {
 impl Display for AstKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Block(inners) => {
+                write!(f, "(block")?;
+
+                for i in inners {
+                    write!(f, " {i}")?
+                }
+
+                write!(f, ")")
+            }
             Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
@@ -170,12 +180,12 @@ impl<'src> AstNode<'src> {
 
 #[derive(Debug)]
 pub struct Program<'src> {
-    declarations: Vec<AstNode<'src>>,
+    blocks: Vec<AstNode<'src>>,
 }
 
 impl<'src> Program<'src> {
-    pub fn declarations(&self) -> &[AstNode<'src>] {
-        &self.declarations
+    pub fn blocks(&self) -> &[AstNode<'src>] {
+        &self.blocks
     }
 }
 #[derive(Debug)]
@@ -187,11 +197,11 @@ pub enum Expected<'src> {
 impl Display for Expected<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let i = match self {
-            Self::Expr => "expression",
-            Self::Token(t) => t.token_type(),
+            Self::Expr => "expression".into(),
+            Self::Token(t) => format!("'{}'", t.lexeme()),
         };
 
-        write!(f, "Expect {i}.")
+        write!(f, "Expect {i} .")
     }
 }
 
@@ -225,12 +235,12 @@ impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "[line {}] Error at '{}': {}",
+            "[line {}] Error at {}: {}",
             self.line + 1,
             if let Some(t) = self.token {
-                t.lexeme()
+                format!("'{}'", t.lexeme())
             } else {
-                "".to_string()
+                "end".into()
             },
             self.kind
         )
@@ -244,53 +254,15 @@ type AcceptToken<'src> = Option<Token<'src>>;
 type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
 type ParseResult<'src> = Result<'src, AstNode<'src>>;
 
-trait ParserExpectedExt<'src, T> {
-    fn expected(self, expected: Expected<'src>, parser: &Parser<'src>) -> Result<'src, T>;
-}
-
-impl<'src> ParserExpectedExt<'src, Token<'src>> for Option<Token<'src>> {
-    fn expected(
-        self,
-        expected: Expected<'src>,
-        parser: &Parser<'src>,
-    ) -> Result<'src, Token<'src>> {
-        if let Some(i) = self {
-            Ok(i)
-        } else {
-            Err(Error {
-                line: parser.line(),
-                token: None,
-                kind: ErrorKind::Expected(expected),
-            })
-        }
-    }
-}
-
-impl<'src> ParserExpectedExt<'src, Symbol<Token<'src>>> for Option<Symbol<Token<'src>>> {
-    fn expected(
-        self,
-        expected: Expected<'src>,
-        parser: &Parser<'src>,
-    ) -> Result<'src, Symbol<Token<'src>>> {
-        if let Some(i) = self {
-            Ok(i)
-        } else {
-            Err(Error {
-                line: parser.line(),
-                token: None,
-                kind: ErrorKind::Expected(expected),
-            })
-        }
-    }
-}
-
 /// Parses the lox programming language using a recursive descent approach based on Lox's grammar rules
 ///
 /// See https://craftinginterpreters.com/parsing-expressions.html#ambiguity-and-the-parsing-game
 ///
-/// program        → declaration* EOF ;
+/// program        → ( block | declaration )* EOF ;
 ///
-/// declaration    → varDecl | statement ;
+/// block          → "{"  declaration*  "}";
+///
+/// declaration    → varDecl | statement | block;
 ///
 /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
 /// statement      → exprStmt | printStmt ;
@@ -311,7 +283,7 @@ impl<'src> ParserExpectedExt<'src, Symbol<Token<'src>>> for Option<Symbol<Token<
 ///                | primary ;
 ///
 /// primary        → NUMBER | STRING | "true" | "false" | "nil"
-///                | "(" expression ")"
+///                | "(" expression ")" | IDENTIFIER "=" expression
 ///
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
@@ -398,68 +370,91 @@ impl<'src> Parser<'src> {
         }
     }
 
-    pub fn parse(&self) -> Result<'src, Program<'src>> {
-        let mut declarations = Vec::new();
+    fn err(&self, expected: Expected<'src>) -> ParseResult<'src> {
+        Err(Error {
+            line: self.line(),
+            token: None,
+            kind: ErrorKind::Expected(expected),
+        })
+    }
 
-        while self.peek().is_some() {
-            declarations.push(self.parse_decl()?);
+    fn err_expected_token(&self, token: Token<'src>) -> ParseResult<'src> {
+        self.err(Expected::Token(token))
+    }
+
+    pub fn parse(&self) -> Result<'src, Program<'src>> {
+        let mut blocks = Vec::new();
+
+        while let Some(t) = self.peek() {
+            let b = match t {
+                Token::RightBrace => self.parse_block()?,
+                _ => self.parse_decl()?,
+            };
+
+            blocks.push(b);
         }
 
         assert_eq!(self.next(), None);
 
-        Ok(Program { declarations })
+        Ok(Program { blocks })
+    }
+
+    fn parse_block(&self) -> ParseResult<'src> {
+        self.expect(Token::LeftBrace)?;
+
+        eprintln!("parsing block");
+
+        let mut decls = Vec::new();
+
+        while !matches!(self.peek(), Some(Token::RightBrace) | None) {
+            eprintln!("\nPARSING_BLOCK_MEMBER\n");
+            let decl = self.parse_decl()?;
+            eprintln!("\nPARSED BLOCK MEMBER: {decl}\n");
+            decls.push(decl);
+        }
+
+        eprintln!("end of block or file");
+
+        self.expect(Token::RightBrace)?;
+
+        Ok(AstKind::Block(decls).into_ast(self))
     }
 
     fn parse_decl(&self) -> ParseResult<'src> {
-        self.parse_var_decl().or_else(|_| self.parse_stmt())
+        self.parse_var_decl()
+            .or_else(|_| self.parse_stmt())
+            .or_else(|_| self.parse_block())
     }
 
     fn parse_var_decl(&self) -> ParseResult<'src> {
         eprintln!("parsing var decl");
-        let nexts = [self.next(), self.next(), self.next()];
-        let expected_token = match nexts {
-            [Some(Token::Keyword(Keyword::Var)), Some(Token::Identifier(ident)), Some(Token::Equal)] =>
-            {
+
+        self.expect(Token::Keyword(Keyword::Var))?;
+
+        let Some(Token::Identifier(ident)) = self.peek() else {
+            return self.err_expected_token(Token::Identifier("ANY_IDENT"));
+        };
+
+        self.next().unwrap();
+
+        let var_decl = match self.peek() {
+            Some(Token::Semicolon) => {
+                self.next().unwrap();
+                AstKind::VarDecl(ident, AstKind::Primary(Primary::Nil).into_ast(self).into())
+            }
+            Some(Token::Equal) => {
+                self.next().unwrap();
                 let value = self.parse_expr()?;
                 self.expect(Token::Semicolon)?;
 
-                eprintln!("got declr with value {value}");
+                eprintln!("got decl with value {value}");
 
-                return Ok(AstKind::VarDecl(ident, value.into()).into_ast(self));
+                AstKind::VarDecl(ident, value.into())
             }
-            [Some(Token::Keyword(Keyword::Var)), Some(Token::Identifier(ident)), Some(last)] => {
-                if let Token::Semicolon = last {
-                    return Ok(AstKind::VarDecl(
-                        ident,
-                        AstKind::Primary(Primary::Nil).into_ast(self).into(),
-                    )
-                    .into_ast(self));
-                } else {
-                    Token::Semicolon
-                }
-            }
-            _ => Token::Keyword(Keyword::Var),
+            _ => return self.err_expected_token(Token::Semicolon),
         };
 
-        let num = nexts.iter().filter(|n| n.is_some()).count();
-        let mut token = None;
-
-        eprintln!(
-            "didn't get var declr, going back {num} tokens, currently at {:?}",
-            self.peek()
-        );
-
-        for _ in 0..num {
-            token = self.prev();
-        }
-
-        eprintln!("after going back at {:?}", self.peek());
-
-        Err(Error {
-            line: self.line(),
-            token,
-            kind: ErrorKind::Expected(Expected::Token(expected_token)),
-        })
+        Ok(var_decl.into_ast(self))
     }
 
     fn parse_stmt(&self) -> ParseResult<'src> {
@@ -612,8 +607,9 @@ impl<'src> Parser<'src> {
 
     /// Accepts a primary
     fn parse_primary(&self) -> ParseResult<'src> {
-        let next = self.next().expected(Expected::Expr, self)?;
-        eprintln!("parsing primary {next}");
+        let Some(next) = self.next() else {
+            return self.err(Expected::Expr);
+        };
 
         let ast = match next {
             Token::Number(n, _) => Primary::Number(n),
@@ -631,7 +627,7 @@ impl<'src> Parser<'src> {
                     return Ok(AstKind::VariableAccess(i).into_ast(self));
                 }
             }
-            _ => { 
+            _ => {
                 self.prev().unwrap();
                 return self.parse_group();
             }
