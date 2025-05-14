@@ -26,7 +26,7 @@ fn bool() {
         format!("{}", program.blocks().iter().next().unwrap()),
         "true"
     );
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "true")
@@ -40,7 +40,7 @@ fn nil() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "nil")
@@ -54,7 +54,7 @@ fn unarys() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "true")
@@ -68,7 +68,7 @@ fn numbers() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "91")
@@ -82,7 +82,7 @@ fn neg_number() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "-2")
@@ -96,7 +96,7 @@ fn neg_numbers_2() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "-89")
@@ -110,7 +110,7 @@ fn string_concat() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "hellohello")
@@ -124,7 +124,7 @@ fn string_concat_groups() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "quzbazquzbar")
@@ -138,7 +138,7 @@ fn unary_expected_num() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let err = executor.eval().unwrap_err();
 
     assert!(matches!(err.kind(), ErrorKind::MustBeNumber))
@@ -153,7 +153,7 @@ fn expect_both_nums_or_strings() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let executor = Executor::with_stdout(&program);
+    let mut executor = Executor::with_stdout(program.blocks());
     let err = executor.eval().unwrap_err();
 
     assert_eq!(err.line(), 1);
@@ -186,7 +186,7 @@ fn print() {
     );
 
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(&program, &mut stdout);
+    let mut executor = Executor::new(program.blocks(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -217,7 +217,7 @@ fn multiline_with_not_ascii() {
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(&program, &mut stdout);
+    let mut executor = Executor::new(program.blocks(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -259,7 +259,7 @@ fn basic_vars() {
     assert_eq!(format!("{}", blocks.next().unwrap()), "(print (+ (+ (varAccess test) ___) (varAccess test)))");
 
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(&program, &mut stdout);
+    let mut executor = Executor::new(program.blocks(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -286,7 +286,7 @@ fn basic_string_vars() {
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(&program, &mut stdout);
+    let mut executor = Executor::new(program.blocks(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -337,7 +337,7 @@ fn basic_var_reassignment() {
     );
 
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(&program, &mut stdout);
+    let mut executor = Executor::new(program.blocks(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -363,7 +363,7 @@ fn multi_variable_assignment() {
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(&program, &mut stdout);
+    let mut executor = Executor::new(program.blocks(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();

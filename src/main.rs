@@ -62,7 +62,7 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let executor = Executor::with_stdout(&program);
+            let mut executor = Executor::with_stdout(program.blocks());
             match executor.eval() {
                 Ok(res) => println!("{}", res),
                 Err(e) => {
@@ -80,7 +80,7 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let executor = Executor::with_stdout(&program);
+            let mut executor = Executor::with_stdout(program.blocks());
             match executor.run() {
                 Ok(..) => {}
                 Err(e) => {

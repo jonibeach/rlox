@@ -1,20 +1,21 @@
-use std::{borrow::Cow, cell::RefCell, collections::HashMap, fmt::Display, io::Write};
+use std::{borrow::Cow, cell::Cell, collections::HashMap, fmt::Display, io::Write};
 
-use crate::parser::{AstKind, AstNode, CmpOp, EqOp, FactorOp, Primary, Program, TermOp, UnaryOp};
+use crate::parser::{AstKind, AstNode, CmpOp, EqOp, FactorOp, Primary, TermOp, UnaryOp};
 
 #[derive(Debug)]
-pub enum ErrorKind<'src> {
+pub enum ErrorKind<'e> {
     MustBeNumber,
     BothMustBeNumbers,
     BothMustBeNumbersOrStrings,
-    UndefinedVariable(&'src str),
+    UndefinedVariable(&'e str),
+    StackOverflow,
     Io(std::io::Error),
 }
 
 #[derive(Debug)]
-pub struct Error<'src> {
+pub struct Error<'e> {
     line: usize,
-    kind: ErrorKind<'src>,
+    kind: ErrorKind<'e>,
 }
 
 impl<'src> Error<'src> {
@@ -42,6 +43,9 @@ impl Display for Error<'_> {
             ErrorKind::UndefinedVariable(ident) => {
                 format!("Undefined variable '{ident}'.")
             }
+            ErrorKind::StackOverflow => {
+                format!("Stack overflow.")
+            }
             ErrorKind::Io(..) => "IO error".into(),
         };
 
@@ -52,120 +56,159 @@ impl Display for Error<'_> {
 
 pub type Result<'src, T> = std::result::Result<T, Error<'src>>;
 
-pub struct Executor<'src, 'p, T> {
-    program: &'p Program<'src>,
-    stdout: RefCell<T>,
-    global_vars: RefCell<HashMap<&'src str, Primary<'src>>>,
+const STACK_SIZE: usize = 1 << 12;
+
+pub struct Executor<'e, T> {
+    program: &'e [AstNode<'e>],
+    stack: [Option<HashMap<&'e str, Primary<'e>>>; STACK_SIZE],
+    stack_ptr: Cell<usize>,
+    stdout: T,
 }
 
-impl<'src, 'p> Executor<'src, 'p, std::io::Stdout>
-where
-    'p: 'src,
-{
-    pub fn with_stdout(program: &'p Program<'src>) -> Self {
+impl<'e> Executor<'e, std::io::Stdout> {
+    pub fn with_stdout(program: &'e [AstNode<'e>]) -> Self {
         Self::new(program, std::io::stdout())
     }
 }
 
-impl<'src, 'p, T: Write> Executor<'src, 'p, T>
-where
-    'p: 'src,
-{
-    pub fn new(program: &'p Program<'src>, stdout: T) -> Self {
+impl<'e, T: Write> Executor<'e, T> {
+    pub fn new(program: &'e [AstNode<'e>], stdout: T) -> Self {
         Self {
             program,
-            stdout: stdout.into(),
-            global_vars: HashMap::new().into(),
+            stdout,
+            stack: [const { None }; STACK_SIZE],
+            stack_ptr: 0.into(),
         }
     }
 
-    pub fn eval(&'src self) -> Result<'src, String> {
-        let mut res = String::new();
-        eprintln!("evaling program");
-        for declr in self.program.blocks() {
-            eprintln!("evaling declr {declr}");
-            res = Self::print_primary(&self.eval_node(declr)?);
-        }
+    pub fn eval(&mut self) -> Result<'e, String> {
+        let p = self.eval_primary()?;
 
-        Ok(res)
+        if let Some(p) = p {
+            Ok(Self::print_primary(p))
+        } else {
+            Ok(String::new())
+        }
     }
 
-    pub fn run(&'src self) -> Result<'src, ()> {
+    pub fn run(&mut self) -> Result<'e, ()> {
         self.eval()?;
 
         Ok(())
     }
 
-    fn err_inner(&self, node: &'p AstNode<'src>, kind: ErrorKind<'src>) -> Error {
+    fn eval_primary(&mut self) -> Result<'e, Option<Primary<'e>>> {
+        let mut res = None;
+        eprintln!("evaling program");
+        for declr in self.program {
+            eprintln!("evaling declr {declr}");
+            res = Some(self.eval_node(declr)?);
+        }
+
+        Ok(res)
+    }
+
+    fn err_inner(&self, node: &'e AstNode<'e>, kind: ErrorKind<'e>) -> Error<'e> {
         Error::new(node.line(), kind)
     }
-    fn err<E>(&self, node: &'p AstNode<'src>, kind: ErrorKind<'src>) -> Result<E> {
+    fn err<E>(&self, node: &'e AstNode<'e>, kind: ErrorKind<'e>) -> Result<'e, E> {
         Err(self.err_inner(node, kind))
     }
 
-    fn resolve_var(
-        &'src self,
-        node: &'p AstNode<'src>,
-        ident: &'src str,
-    ) -> Result<'src, Primary<'src>> {
-        let global_vars = self.global_vars.borrow();
-        let var = global_vars
-            .get(ident)
-            .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(ident)))?
-            .clone();
-
-        std::mem::drop(global_vars);
-
-        Ok(var)
+    fn incr_stack_frame(&mut self, node: &'e AstNode<'e>) -> Result<'e, ()> {
+        let curr = self.stack_ptr.get();
+        if curr < STACK_SIZE {
+            self.stack_ptr.set(curr + 1);
+            Ok(())
+        } else {
+            self.err(node, ErrorKind::StackOverflow)
+        }
     }
 
-    fn print_primary(p: &Primary<'src>) -> String {
+    fn current_stack_frame_inner(&mut self) -> &mut Option<HashMap<&'e str, Primary<'e>>> {
+        let stack_ptr = self.stack_ptr.get();
+        &mut self.stack[stack_ptr]
+    }
+
+    fn current_stack_frame(&mut self) -> &mut HashMap<&'e str, Primary<'e>> {
+        let stack_frame = self.current_stack_frame_inner();
+        if let Some(frame) = stack_frame {
+            return frame;
+        }
+
+        *stack_frame = Some(HashMap::new());
+
+        let Some(frame) = stack_frame else {
+            unreachable!()
+        };
+
+        frame
+    }
+    fn find_var_frame(&self, ident: &str) -> Option<usize> {
+        (0..=self.stack_ptr.get()).rev().find(|&i| {
+            self.stack[i]
+                .as_ref()
+                .and_then(|frame| frame.get(ident))
+                .is_some()
+        })
+    }
+
+    fn resolve_var(&self, node: &'e AstNode<'e>, ident: &'e str) -> Result<'e, &Primary<'e>> {
+        if let Some(i) = self.find_var_frame(ident) {
+            return Ok(self.stack[i].as_ref().unwrap().get(ident).unwrap());
+        }
+        self.err(node, ErrorKind::UndefinedVariable(ident))
+    }
+
+    fn resolve_var_mut(
+        &mut self,
+        node: &'e AstNode<'e>,
+        ident: &'e str,
+    ) -> Result<'e, &mut Primary<'e>> {
+        if let Some(i) = self.find_var_frame(ident) {
+            return Ok(self.stack[i].as_mut().unwrap().get_mut(ident).unwrap());
+        }
+        self.err(node, ErrorKind::UndefinedVariable(ident))
+    }
+
+    fn print_primary(p: Primary<'e>) -> String {
         match p {
             Primary::Number(n) => format!("{}", Into::<f64>::into(n)),
             p => format!("{p}"),
         }
     }
 
-    fn eval_node(&'src self, node: &'p AstNode<'src>) -> Result<'src, Primary<'src>> {
+    fn eval_node(&mut self, node: &'e AstNode<'e>) -> Result<'e, Primary<'e>> {
         eprintln!("eval {node}");
         let primary = match node.kind() {
-            AstKind::Block(members) => {
-                let mut res = Primary::Nil;
-                for m in members {
-                    res = self.eval_node(m)?;
+            AstKind::Block(i) => {
+                self.incr_stack_frame(node)?;
+                for i in i {
+                    self.eval_node(i)?;
                 }
+                *self.current_stack_frame_inner() = None;
+                self.stack_ptr.set(self.stack_ptr.get() - 1);
 
-                res
+                Primary::Bool(true)
             }
             AstKind::VarDecl(ident, i) => {
                 let val = self.eval_node(i)?;
-
-                {
-                    let mut global_vars = self.global_vars.borrow_mut();
-                    global_vars.insert(ident, val.clone());
-                }
+                self.current_stack_frame().insert(ident, val);
 
                 Primary::Bool(true)
             }
             AstKind::VarAssign(ident, i) => {
                 let new_val = self.eval_node(i)?;
-
-                {
-                    let mut global_vars = self.global_vars.borrow_mut();
-                    let var = global_vars
-                        .get_mut(ident)
-                        .ok_or_else(|| self.err_inner(node, ErrorKind::UndefinedVariable(ident)))?;
-                    *var = new_val.clone();
-                }
+                *self.resolve_var_mut(node, ident)? = new_val.clone();
 
                 new_val
             }
             AstKind::Print(i) => {
-                let mut stdout = self.stdout.borrow_mut();
                 let node_val = self.eval_node(i)?;
-                let out = Self::print_primary(&node_val);
+                let out = Self::print_primary(node_val);
+
                 eprintln!("printing {out}");
-                writeln!(stdout, "{}", out).map_err(|io| Error {
+                writeln!(self.stdout, "{}", out).map_err(|io| Error {
                     line: i.line(),
                     kind: ErrorKind::Io(io),
                 })?;
@@ -188,14 +231,14 @@ where
                 UnaryOp::Neg => Primary::Number((-self.as_num(i)?).into()),
             },
             AstKind::Group(i) => self.eval_node(i)?,
-            AstKind::VariableAccess(ident) => self.resolve_var(node, ident)?,
+            AstKind::VariableAccess(ident) => self.resolve_var(node, ident)?.clone(),
             AstKind::Primary(p) => p.clone(),
         };
 
         Ok(primary)
     }
 
-    fn as_num(&'src self, node: &'p AstNode<'src>) -> Result<'src, f64> {
+    fn as_num(&self, node: &'e AstNode<'e>) -> Result<'e, f64> {
         eprintln!("as num {node}");
         match node.kind() {
             AstKind::Term(a, op, b) => match op {
@@ -219,7 +262,7 @@ where
             AstKind::Group(i) => self.as_num(i),
             AstKind::VariableAccess(ident) => {
                 if let Primary::Number(n) = self.resolve_var(node, ident)? {
-                    Ok(n.into())
+                    Ok(n.clone().into())
                 } else {
                     self.err(node, ErrorKind::MustBeNumber)
                 }
@@ -229,7 +272,7 @@ where
         }
     }
 
-    fn as_string(&'src self, node: &'p AstNode<'src>) -> Option<Cow<'src, str>> {
+    fn as_string(&self, node: &'e AstNode<'e>) -> Option<Cow<'e, str>> {
         eprintln!("as str {node}");
         match node.kind() {
             AstKind::Term(a, op, b) => {
@@ -242,7 +285,7 @@ where
             AstKind::Group(i) => return self.as_string(i),
             AstKind::VariableAccess(ident) => {
                 if let Primary::String(s) = self.resolve_var(node, ident).ok()? {
-                    return Some(s);
+                    return Some(s.clone());
                 }
             }
             AstKind::Primary(Primary::String(s)) => return Some(Cow::Borrowed(s)),
@@ -252,7 +295,7 @@ where
         None
     }
 
-    fn primary_truthiness(p: &Primary<'src>) -> bool {
+    fn primary_truthiness(p: &Primary<'e>) -> bool {
         match p {
             Primary::Bool(i) => *i,
             Primary::Nil => false,
@@ -261,7 +304,7 @@ where
         }
     }
 
-    fn truthiness(&'src self, node: &'p AstNode<'src>) -> Result<'src, bool> {
+    fn truthiness(&self, node: &'e AstNode<'e>) -> Result<'e, bool> {
         eprintln!("truthiness {node}");
         let res = match node.kind() {
             AstKind::Block(..) => true,
@@ -307,7 +350,7 @@ where
                 UnaryOp::Neg => self.truthiness(i)?,
             },
             AstKind::VariableAccess(ident) => {
-                Self::primary_truthiness(&self.resolve_var(node, ident)?)
+                Self::primary_truthiness(self.resolve_var(node, ident)?)
             }
             AstKind::Group(i) => self.truthiness(i)?,
             AstKind::Primary(p) => Self::primary_truthiness(p),
