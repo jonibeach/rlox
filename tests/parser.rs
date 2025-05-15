@@ -10,7 +10,7 @@ fn group() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.blocks().first().unwrap()),
+        format!("{}", program.decls().first().unwrap()),
         r#"(group (+ test 234.0))"#
     )
 }
@@ -27,7 +27,7 @@ fn group_in_group() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.blocks().first().unwrap()),
+        format!("{}", program.decls().first().unwrap()),
         r#"(group (/ test (group (+ hello 555.111))))"#
     )
 }
@@ -44,7 +44,7 @@ fn negate_and_not() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.blocks().first().unwrap()),
+        format!("{}", program.decls().first().unwrap()),
         r#"(group (! (group (+ 123.0 (- 55.03)))))"#
     )
 }
@@ -61,7 +61,7 @@ fn basic_expr() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.blocks().first().unwrap()),
+        format!("{}", program.decls().first().unwrap()),
         r#"(/ (* 82.0 99.0) 18.0)"#,
     )
 }
@@ -78,7 +78,7 @@ fn nested_expr_pretty_basic_still_with_comments() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.blocks().first().unwrap()),
+        format!("{}", program.decls().first().unwrap()),
         r#"(group (/ (* 77.0 (- 74.0)) (group (* 87.0 99.0))))"#,
     )
 }
@@ -95,7 +95,7 @@ fn basic_cmps_with_groups() {
     let program = parser.parse().unwrap();
 
     assert_eq!(
-        format!("{}", program.blocks().first().unwrap()),
+        format!("{}", program.decls().first().unwrap()),
         r#"(== (group (!= 94.0 25.0)) (group (>= (group (+ (- 39.0) 86.0)) (group (* 72.0 19.0)))))"#,
     )
 }
@@ -110,7 +110,7 @@ fn var() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut blocks = program.blocks().into_iter();
+    let mut blocks = program.decls().into_iter();
 
     assert_eq!(format!("{}", blocks.next().unwrap()), r#"(varDecl x 10.0)"#);
 
@@ -132,7 +132,7 @@ fn empty_print_err() {
     let program = parser.parse();
     assert_eq!(
         format!("{}", program.unwrap_err()),
-        "[line 1] Error at ';': Expect '{' ."
+        "[line 1] Error at ';': Expect '(' ."
     );
 }
 
@@ -146,7 +146,7 @@ fn var_assign() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut blocks = program.blocks().iter();
+    let mut blocks = program.decls().iter();
 
     assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl a 2.0)");
     assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl b 3.0)");
@@ -172,7 +172,7 @@ fn nested_blocks() {
 
     let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut blocks = program.blocks().iter();
+    let mut blocks = program.decls().iter();
 
     assert_eq!(
         format!("{}", blocks.next().unwrap()),

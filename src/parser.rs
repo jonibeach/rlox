@@ -107,6 +107,10 @@ impl Display for Primary<'_> {
 #[derive(Debug, PartialEq)]
 pub enum AstKind<'src> {
     Block(Vec<AstNode<'src>>),
+    If {
+        condition: Box<AstNode<'src>>,
+        inner: Box<AstNode<'src>>,
+    },
     VarAssign(&'src str, Box<AstNode<'src>>),
     VarDecl(&'src str, Box<AstNode<'src>>),
     Print(Box<AstNode<'src>>),
@@ -141,6 +145,7 @@ impl Display for AstKind<'_> {
 
                 write!(f, ")")
             }
+            Self::If { condition, inner } => write!(f, "(if {condition} then {inner})"),
             Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
@@ -180,12 +185,12 @@ impl<'src> AstNode<'src> {
 
 #[derive(Debug)]
 pub struct Program<'src> {
-    blocks: Vec<AstNode<'src>>,
+    decls: Vec<AstNode<'src>>,
 }
 
 impl<'src> Program<'src> {
-    pub fn blocks(&self) -> &[AstNode<'src>] {
-        &self.blocks
+    pub fn decls(&self) -> &[AstNode<'src>] {
+        &self.decls
     }
 }
 #[derive(Debug)]
@@ -256,34 +261,7 @@ type ParseResult<'src> = Result<'src, AstNode<'src>>;
 
 /// Parses the lox programming language using a recursive descent approach based on Lox's grammar rules
 ///
-/// See https://craftinginterpreters.com/parsing-expressions.html#ambiguity-and-the-parsing-game
-///
-/// program        → ( block | declaration )* EOF ;
-///
-/// block          → "{"  declaration*  "}";
-///
-/// declaration    → varDecl | statement | block;
-///
-/// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
-/// statement      → exprStmt | printStmt ;
-///
-/// exprStmt       → expression ";" ;
-/// printStmt      → "print" expression ";" ;
-/// expression     → equality ;
-///
-/// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-///
-/// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-///
-/// term           → factor ( ( "-" | "+" ) factor )* ;
-///
-/// factor         → unary ( ( "/" | "*" ) unary )* ;
-///
-/// unary          → ( "!" | "-" ) unary
-///                | primary ;
-///
-/// primary        → NUMBER | STRING | "true" | "false" | "nil"
-///                | "(" expression ")" | IDENTIFIER "=" expression
+/// See https://craftinginterpreters.com/appendix-i.html
 ///
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
@@ -382,23 +360,58 @@ impl<'src> Parser<'src> {
         self.err(Expected::Token(token))
     }
 
+    /// program        → declaration* EOF ;
     pub fn parse(&self) -> Result<'src, Program<'src>> {
-        let mut blocks = Vec::new();
+        let mut decls = Vec::new();
 
-        while let Some(t) = self.peek() {
-            let b = match t {
-                Token::RightBrace => self.parse_block()?,
-                _ => self.parse_decl()?,
-            };
-
-            blocks.push(b);
+        while self.peek().is_some() {
+            decls.push(self.parse_decl()?);
         }
 
         assert_eq!(self.next(), None);
 
-        Ok(Program { blocks })
+        Ok(Program { decls })
     }
 
+    /// statement      → exprStmt
+    ///                | ifStmt
+    ///                | printStmt
+    ///                | block ;
+    fn parse_stmt(&self) -> ParseResult<'src> {
+        match self.peek() {
+            Some(Token::Keyword(Keyword::Print)) => {
+                // printStmt      → "print" expression ";" ;
+                self.next().unwrap();
+                let expr = self.parse_expr()?;
+                self.expect(Token::Semicolon)?;
+
+                Ok(AstKind::Print(expr.into()).into_ast(self))
+            }
+            Some(Token::Keyword(Keyword::If)) => self.parse_if_stmt(),
+            Some(Token::LeftBrace) => self.parse_block(),
+            _ => {
+                // exprStmt       → expression ";" ;
+                let expr = self.parse_expr()?;
+                if self.force_ending_semicolon {
+                    self.expect(Token::Semicolon)?;
+                }
+
+                Ok(expr)
+            }
+        }
+    }
+
+    /// ifStmt         → "if" "(" expression ")" statement;
+    fn parse_if_stmt(&self) -> ParseResult<'src> {
+        self.expect(Token::Keyword(Keyword::If))?;
+        self.expect(Token::LeftParen)?;
+        let condition = self.parse_expr()?.into();
+        self.expect(Token::RightParen)?;
+        let inner = self.parse_stmt()?.into();
+        Ok(AstKind::If { condition, inner }.into_ast(self))
+    }
+
+    /// block          → "{" declaration* "}";
     fn parse_block(&self) -> ParseResult<'src> {
         self.expect(Token::LeftBrace)?;
 
@@ -420,12 +433,15 @@ impl<'src> Parser<'src> {
         Ok(AstKind::Block(decls).into_ast(self))
     }
 
+    /// declaration    → varDecl | statement | block;
     fn parse_decl(&self) -> ParseResult<'src> {
-        self.parse_var_decl()
-            .or_else(|_| self.parse_stmt())
-            .or_else(|_| self.parse_block())
+        match self.peek() {
+            Some(Token::LeftBrace) => self.parse_block(),
+            _ => self.parse_var_decl().or_else(|_| self.parse_stmt()),
+        }
     }
 
+    /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
     fn parse_var_decl(&self) -> ParseResult<'src> {
         eprintln!("parsing var decl");
 
@@ -457,36 +473,12 @@ impl<'src> Parser<'src> {
         Ok(var_decl.into_ast(self))
     }
 
-    fn parse_stmt(&self) -> ParseResult<'src> {
-        let mut is_print = false;
-
-        eprintln!("parsing stmt");
-        if let Some(Token::Keyword(Keyword::Print)) = self.peek() {
-            is_print = true;
-            eprintln!("is print stmt");
-            self.next().unwrap();
-        }
-
-        let expr = self.parse_expr()?;
-
-        let stmt = match is_print {
-            true => AstKind::Print(expr.into()),
-            false => expr.kind,
-        };
-
-        if self.force_ending_semicolon {
-            self.expect(Token::Semicolon)?;
-        }
-
-        eprintln!("accepted stmt {stmt}");
-
-        Ok(stmt.into_ast(self))
-    }
-
+    /// expression     → equality ;
     fn parse_expr(&self) -> ParseResult<'src> {
         self.parse_eq()
     }
 
+    /// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
     fn parse_eq(&self) -> ParseResult<'src> {
         let mut a = self.parse_cmp()?;
 
@@ -506,6 +498,7 @@ impl<'src> Parser<'src> {
         Ok(a)
     }
 
+    /// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
     fn parse_cmp(&self) -> ParseResult<'src> {
         let mut a = self.parse_term()?;
 
@@ -529,6 +522,7 @@ impl<'src> Parser<'src> {
         Ok(a)
     }
 
+    /// term           → factor ( ( "-" | "+" ) factor )* ;
     fn parse_term(&self) -> ParseResult<'src> {
         let mut a = self.parse_factor()?;
         eprintln!("parsing term {a}");
@@ -547,6 +541,7 @@ impl<'src> Parser<'src> {
         Ok(a)
     }
 
+    /// factor         → unary ( ( "/" | "*" ) unary )* ;
     fn parse_factor(&self) -> ParseResult<'src> {
         let mut a = self.parse_unary()?;
 
@@ -566,7 +561,8 @@ impl<'src> Parser<'src> {
         Ok(a)
     }
 
-    /// Accepts a unary expression
+    /// unary          → ( "!" | "-" ) unary
+    ///                | primary ;
     fn parse_unary(&self) -> ParseResult<'src> {
         let unary = self
             .accept(Token::Bang)
@@ -590,7 +586,8 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Accepts a group
+    /// accepts this part of primary
+    ///     "(" expression ")"
     fn parse_group(&self) -> ParseResult<'src> {
         self.expect(Token::LeftParen)?;
 
@@ -605,7 +602,8 @@ impl<'src> Parser<'src> {
         Ok(AstKind::Group(inner.into()).into_ast(self))
     }
 
-    /// Accepts a primary
+    /// primary        → NUMBER | STRING | "true" | "false" | "nil"
+    ///                 | "(" expression ")" | IDENTIFIER "=" expression
     fn parse_primary(&self) -> ParseResult<'src> {
         let Some(next) = self.next() else {
             return self.err(Expected::Expr);

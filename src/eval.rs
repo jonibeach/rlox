@@ -43,9 +43,7 @@ impl Display for Error<'_> {
             ErrorKind::UndefinedVariable(ident) => {
                 format!("Undefined variable '{ident}'.")
             }
-            ErrorKind::StackOverflow => {
-                format!("Stack overflow.")
-            }
+            ErrorKind::StackOverflow => "Stack overflow.".into(),
             ErrorKind::Io(..) => "IO error".into(),
         };
 
@@ -155,7 +153,9 @@ impl<'e, T: Write> Executor<'e, T> {
 
     fn resolve_var(&self, node: &'e AstNode<'e>, ident: &'e str) -> Result<'e, &Primary<'e>> {
         if let Some(i) = self.find_var_frame(ident) {
-            return Ok(self.stack[i].as_ref().unwrap().get(ident).unwrap());
+            let v = self.stack[i].as_ref().unwrap().get(ident).unwrap();
+            eprintln!("resolved var {ident} to {v}");
+            return Ok(v);
         }
         self.err(node, ErrorKind::UndefinedVariable(ident))
     }
@@ -166,7 +166,9 @@ impl<'e, T: Write> Executor<'e, T> {
         ident: &'e str,
     ) -> Result<'e, &mut Primary<'e>> {
         if let Some(i) = self.find_var_frame(ident) {
-            return Ok(self.stack[i].as_mut().unwrap().get_mut(ident).unwrap());
+            let v = self.stack[i].as_mut().unwrap().get_mut(ident).unwrap();
+            eprintln!("resolved var {ident} to {v} (mutably)");
+            return Ok(v);
         }
         self.err(node, ErrorKind::UndefinedVariable(ident))
     }
@@ -181,6 +183,13 @@ impl<'e, T: Write> Executor<'e, T> {
     fn eval_node(&mut self, node: &'e AstNode<'e>) -> Result<'e, Primary<'e>> {
         eprintln!("eval {node}");
         let primary = match node.kind() {
+            AstKind::If { condition, inner } => {
+                if self.truthiness(condition)? {
+                    self.eval_node(inner)?;
+                }
+
+                Primary::Bool(true)
+            }
             AstKind::Block(i) => {
                 self.incr_stack_frame(node)?;
                 for i in i {
@@ -262,7 +271,7 @@ impl<'e, T: Write> Executor<'e, T> {
             AstKind::Group(i) => self.as_num(i),
             AstKind::VariableAccess(ident) => {
                 if let Primary::Number(n) = self.resolve_var(node, ident)? {
-                    Ok(n.clone().into())
+                    Ok((*n).into())
                 } else {
                     self.err(node, ErrorKind::MustBeNumber)
                 }
@@ -304,12 +313,16 @@ impl<'e, T: Write> Executor<'e, T> {
         }
     }
 
-    fn truthiness(&self, node: &'e AstNode<'e>) -> Result<'e, bool> {
+    fn truthiness(&mut self, node: &'e AstNode<'e>) -> Result<'e, bool> {
         eprintln!("truthiness {node}");
         let res = match node.kind() {
+            AstKind::If { .. } => true,
             AstKind::Block(..) => true,
             AstKind::VarDecl(..) => true,
-            AstKind::VarAssign(_, i) => self.truthiness(i)?,
+            AstKind::VarAssign(_, i) => {
+                self.eval_node(node)?;
+                self.truthiness(i)?
+            }
             AstKind::Print(..) => true,
             AstKind::Equality(a, op, b) => {
                 if let Ok(a) = self.as_num(a) {

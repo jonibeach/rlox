@@ -45,11 +45,11 @@ fn main() {
                 std::process::exit(65)
             }
             let parser = Parser::no_ending_semicolons(lexer.tokens());
-            let ast = match parser.parse() {
+            let program = match parser.parse() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
             };
-            for stmt in ast.blocks() {
+            for stmt in program.decls() {
                 println!("{stmt}");
             }
         }
@@ -62,7 +62,7 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let mut executor = Executor::with_stdout(program.blocks());
+            let mut executor = Executor::with_stdout(program.decls());
             match executor.eval() {
                 Ok(res) => println!("{}", res),
                 Err(e) => {
@@ -80,7 +80,7 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let mut executor = Executor::with_stdout(program.blocks());
+            let mut executor = Executor::with_stdout(program.decls());
             match executor.run() {
                 Ok(..) => {}
                 Err(e) => {
