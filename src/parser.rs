@@ -104,25 +104,31 @@ impl Display for Primary<'_> {
     }
 }
 
+type Child<'src> = Box<AstNode<'src>>;
+
 #[derive(Debug, PartialEq)]
 pub enum AstKind<'src> {
     Block(Vec<AstNode<'src>>),
     If {
-        condition: Box<AstNode<'src>>,
-        inner: Box<AstNode<'src>>,
-        el: Option<Box<AstNode<'src>>>,
+        condition: Child<'src>,
+        inner: Child<'src>,
+        el: Option<Child<'src>>,
     },
-    VarAssign(&'src str, Box<AstNode<'src>>),
-    VarDecl(&'src str, Box<AstNode<'src>>),
-    Print(Box<AstNode<'src>>),
-    Or(Box<AstNode<'src>>, Box<AstNode<'src>>),
-    And(Box<AstNode<'src>>, Box<AstNode<'src>>),
-    Equality(Box<AstNode<'src>>, EqOp, Box<AstNode<'src>>),
-    Cmp(Box<AstNode<'src>>, CmpOp, Box<AstNode<'src>>),
-    Term(Box<AstNode<'src>>, TermOp, Box<AstNode<'src>>),
-    Factor(Box<AstNode<'src>>, FactorOp, Box<AstNode<'src>>),
-    Unary(UnaryOp, Box<AstNode<'src>>),
-    Group(Box<AstNode<'src>>),
+    While {
+        condition: Child<'src>,
+        inner: Child<'src>,
+    },
+    VarAssign(&'src str, Child<'src>),
+    VarDecl(&'src str, Child<'src>),
+    Print(Child<'src>),
+    Or(Child<'src>, Child<'src>),
+    And(Child<'src>, Child<'src>),
+    Equality(Child<'src>, EqOp, Child<'src>),
+    Cmp(Child<'src>, CmpOp, Child<'src>),
+    Term(Child<'src>, TermOp, Child<'src>),
+    Factor(Child<'src>, FactorOp, Child<'src>),
+    Unary(UnaryOp, Child<'src>),
+    Group(Child<'src>),
     VariableAccess(&'src str),
     Primary(Primary<'src>),
 }
@@ -160,6 +166,7 @@ impl Display for AstKind<'_> {
 
                 write!(f, ")")
             }
+            Self::While { condition, inner } => write!(f, "(while {condition} {inner})"),
             Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
@@ -392,7 +399,8 @@ impl<'src> Parser<'src> {
     /// statement      → exprStmt
     ///                | ifStmt
     ///                | printStmt
-    ///                | block ;
+    ///                | block
+    ///                | whileStmt ;
     fn parse_stmt(&self) -> ParseResult<'src> {
         match self.peek() {
             Some(Token::Keyword(Keyword::Print)) => {
@@ -405,6 +413,7 @@ impl<'src> Parser<'src> {
             }
             Some(Token::Keyword(Keyword::If)) => self.parse_if_stmt(),
             Some(Token::LeftBrace) => self.parse_block(),
+            Some(Token::Keyword(Keyword::While)) => self.parse_while_stmt(),
             _ => {
                 // exprStmt       → expression ";" ;
                 let expr = self.parse_expr()?;
@@ -438,6 +447,17 @@ impl<'src> Parser<'src> {
             el,
         }
         .into_ast(self))
+    }
+
+    /// whileStmt      → "while" "(" expression ")" statement ;
+    fn parse_while_stmt(&self) -> ParseResult<'src> {
+        self.expect(Token::Keyword(Keyword::While))?;
+        self.expect(Token::LeftParen)?;
+        let condition = self.parse_expr()?.into();
+        self.expect(Token::RightParen)?;
+        let inner = self.parse_stmt()?.into();
+
+        Ok(AstKind::While { condition, inner }.into_ast(self))
     }
 
     /// block          → "{" declaration* "}";

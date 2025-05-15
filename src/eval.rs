@@ -196,6 +196,13 @@ impl<'e, T: Write> Executor<'e, T> {
 
                 Primary::Bool(true)
             }
+            AstKind::While { condition, inner } => {
+                while self.truthiness(&condition)? {
+                    self.eval_node(&inner)?;
+                }
+
+                Primary::Bool(true)
+            }
             AstKind::Block(i) => {
                 self.incr_stack_frame(node)?;
                 for i in i {
@@ -337,6 +344,7 @@ impl<'e, T: Write> Executor<'e, T> {
         eprintln!("truthiness {node}");
         let res = match node.kind() {
             AstKind::If { .. } => true,
+            AstKind::While { .. } => true,
             AstKind::Block(..) => true,
             AstKind::VarDecl(..) => true,
             AstKind::VarAssign(_, i) => {
