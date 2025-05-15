@@ -116,6 +116,7 @@ pub enum AstKind<'src> {
     VarDecl(&'src str, Box<AstNode<'src>>),
     Print(Box<AstNode<'src>>),
     Or(Box<AstNode<'src>>, Box<AstNode<'src>>),
+    And(Box<AstNode<'src>>, Box<AstNode<'src>>),
     Equality(Box<AstNode<'src>>, EqOp, Box<AstNode<'src>>),
     Cmp(Box<AstNode<'src>>, CmpOp, Box<AstNode<'src>>),
     Term(Box<AstNode<'src>>, TermOp, Box<AstNode<'src>>),
@@ -163,6 +164,7 @@ impl Display for AstKind<'_> {
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
             Self::Or(a, b) => write!(f, "(or {a} {b})"),
+            Self::And(a, b) => write!(f, "(and {a} {b})"),
             Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Cmp(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Term(a, op, b) => write!(f, "({op} {a} {b})"),
@@ -505,15 +507,29 @@ impl<'src> Parser<'src> {
         self.parse_logic_or()
     }
 
-    // logic_or       → equality ( "or" equality )* ;
+    // logic_or       → logic_and ( "or" logic_and )* ;
     fn parse_logic_or(&self) -> ParseResult<'src> {
-        let mut a = self.parse_eq()?;
+        let mut a = self.parse_logic_and()?;
 
         while let Some(Token::Keyword(Keyword::Or)) = self.peek() {
             self.next().unwrap();
-            let b = self.parse_eq()?;
+            let b = self.parse_logic_and()?;
 
             a = AstKind::Or(a.into(), b.into()).into_ast(self);
+        }
+
+        Ok(a)
+    }
+
+    /// logic_and      → equality ( "and" equality )* ;
+    fn parse_logic_and(&self) -> ParseResult<'src> {
+        let mut a = self.parse_eq()?;
+
+        while let Some(Token::Keyword(Keyword::And)) = self.peek() {
+            self.next().unwrap();
+            let b = self.parse_eq()?;
+
+            a = AstKind::And(a.into(), b.into()).into_ast(self);
         }
 
         Ok(a)

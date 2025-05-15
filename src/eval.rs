@@ -237,6 +237,13 @@ impl<'e, T: Write> Executor<'e, T> {
                     self.eval_node(b)?
                 }
             }
+            AstKind::And(a, b) => {
+                if self.truthiness(a)? {
+                    self.eval_node(b)?
+                } else {
+                    self.eval_node(a)?
+                }
+            }
             AstKind::Equality(..) => Primary::Bool(self.truthiness(node)?),
             AstKind::Cmp(..) => Primary::Bool(self.truthiness(node)?),
             AstKind::Term(..) => self
@@ -338,6 +345,7 @@ impl<'e, T: Write> Executor<'e, T> {
             }
             AstKind::Print(..) => true,
             AstKind::Or(a, b) => self.truthiness(a)? || self.truthiness(b)?,
+            AstKind::And(a, b) => self.truthiness(a)? && self.truthiness(b)?,
             AstKind::Equality(a, op, b) => {
                 if let Ok(a) = self.as_num(a) {
                     let Ok(b) = self.as_num(b) else {
