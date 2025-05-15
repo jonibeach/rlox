@@ -115,6 +115,7 @@ pub enum AstKind<'src> {
     VarAssign(&'src str, Box<AstNode<'src>>),
     VarDecl(&'src str, Box<AstNode<'src>>),
     Print(Box<AstNode<'src>>),
+    Or(Box<AstNode<'src>>, Box<AstNode<'src>>),
     Equality(Box<AstNode<'src>>, EqOp, Box<AstNode<'src>>),
     Cmp(Box<AstNode<'src>>, CmpOp, Box<AstNode<'src>>),
     Term(Box<AstNode<'src>>, TermOp, Box<AstNode<'src>>),
@@ -161,6 +162,7 @@ impl Display for AstKind<'_> {
             Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
+            Self::Or(a, b) => write!(f, "(or {a} {b})"),
             Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Cmp(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Term(a, op, b) => write!(f, "({op} {a} {b})"),
@@ -498,9 +500,23 @@ impl<'src> Parser<'src> {
         Ok(var_decl.into_ast(self))
     }
 
-    /// expression     → equality ;
+    /// expression     → logic_or ;
     fn parse_expr(&self) -> ParseResult<'src> {
-        self.parse_eq()
+        self.parse_logic_or()
+    }
+
+    // logic_or       → equality ( "or" equality )* ;
+    fn parse_logic_or(&self) -> ParseResult<'src> {
+        let mut a = self.parse_eq()?;
+
+        while let Some(Token::Keyword(Keyword::Or)) = self.peek() {
+            self.next().unwrap();
+            let b = self.parse_eq()?;
+
+            a = AstKind::Or(a.into(), b.into()).into_ast(self);
+        }
+
+        Ok(a)
     }
 
     /// equality       → comparison ( ( "!=" | "==" ) comparison )* ;

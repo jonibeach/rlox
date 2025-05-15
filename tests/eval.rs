@@ -406,3 +406,36 @@ fn basic_if() {
     assert_eq!(lines.next().unwrap(), "true");
     assert!(lines.next().is_none());
 }
+
+#[test]
+fn many_ors() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        print 66 or true;
+        print false or 66;
+        print false or false or true;
+
+        print false or false;
+        print false or false or false;
+        print false or false or false or false;
+    "#;
+
+    lexer.lex(src);
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "66");
+    assert_eq!(lines.next().unwrap(), "66");
+    assert_eq!(lines.next().unwrap(), "true");
+    assert_eq!(lines.next().unwrap(), "false");
+    assert_eq!(lines.next().unwrap(), "false");
+    assert_eq!(lines.next().unwrap(), "false");
+    assert!(lines.next().is_none());
+}
