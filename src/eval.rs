@@ -183,9 +183,15 @@ impl<'e, T: Write> Executor<'e, T> {
     fn eval_node(&mut self, node: &'e AstNode<'e>) -> Result<'e, Primary<'e>> {
         eprintln!("eval {node}");
         let primary = match node.kind() {
-            AstKind::If { condition, inner } => {
+            AstKind::If {
+                condition,
+                inner,
+                el,
+            } => {
                 if self.truthiness(condition)? {
                     self.eval_node(inner)?;
+                } else if let Some(el) = el {
+                    self.eval_node(el)?;
                 }
 
                 Primary::Bool(true)

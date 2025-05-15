@@ -110,6 +110,7 @@ pub enum AstKind<'src> {
     If {
         condition: Box<AstNode<'src>>,
         inner: Box<AstNode<'src>>,
+        el: Option<Box<AstNode<'src>>>,
     },
     VarAssign(&'src str, Box<AstNode<'src>>),
     VarDecl(&'src str, Box<AstNode<'src>>),
@@ -145,7 +146,18 @@ impl Display for AstKind<'_> {
 
                 write!(f, ")")
             }
-            Self::If { condition, inner } => write!(f, "(if {condition} then {inner})"),
+            Self::If {
+                condition,
+                inner,
+                el,
+            } => {
+                write!(f, "(if {condition} then {inner}")?;
+                if let Some(el) = el {
+                    write!(f, " else {el}")?;
+                }
+
+                write!(f, ")")
+            }
             Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
@@ -401,14 +413,27 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// ifStmt         → "if" "(" expression ")" statement;
+    /// ifStmt         → "if" "(" expression ")" statement
+    ///              ( "else" statement )? ;
     fn parse_if_stmt(&self) -> ParseResult<'src> {
         self.expect(Token::Keyword(Keyword::If))?;
         self.expect(Token::LeftParen)?;
         let condition = self.parse_expr()?.into();
         self.expect(Token::RightParen)?;
         let inner = self.parse_stmt()?.into();
-        Ok(AstKind::If { condition, inner }.into_ast(self))
+        let mut el = None;
+
+        if let Some(Token::Keyword(Keyword::Else)) = self.peek() {
+            self.next().unwrap();
+            let else_inner = self.parse_stmt()?;
+            el = Some(else_inner.into())
+        }
+        Ok(AstKind::If {
+            condition,
+            inner,
+            el,
+        }
+        .into_ast(self))
     }
 
     /// block          → "{" declaration* "}";
