@@ -203,24 +203,24 @@ impl<'e, T: Write> Executor<'e, T> {
                 body,
             } => {
                 if let Some(begin) = begin {
-                    self.eval_node(&begin)?;
+                    self.eval_node(begin)?;
                 }
 
                 while match condition {
-                    Some(c) => self.truthiness(&c)?,
+                    Some(c) => self.truthiness(c)?,
                     None => true,
                 } {
-                    self.eval_node(&body)?;
+                    self.eval_node(body)?;
                     if let Some(after_iter) = after_iter {
-                        self.eval_node(&after_iter)?;
+                        self.eval_node(after_iter)?;
                     }
                 }
 
                 Primary::Bool(true)
             }
             AstKind::While { condition, body } => {
-                while self.truthiness(&condition)? {
-                    self.eval_node(&body)?;
+                while self.truthiness(condition)? {
+                    self.eval_node(body)?;
                 }
 
                 Primary::Bool(true)
@@ -236,7 +236,11 @@ impl<'e, T: Write> Executor<'e, T> {
                 Primary::Bool(true)
             }
             AstKind::VarDecl(ident, i) => {
-                let val = self.eval_node(i)?;
+                let val = match i {
+                    Some(i) => self.eval_node(i)?,
+                    None => Primary::Nil,
+                };
+
                 self.current_stack_frame().insert(ident, val);
 
                 Primary::Bool(true)

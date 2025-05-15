@@ -44,7 +44,7 @@ fn main() {
             if !lexer.errors().is_empty() {
                 std::process::exit(65)
             }
-            let parser = Parser::no_ending_semicolons(lexer.tokens());
+            let mut parser = Parser::no_ending_semicolons(lexer.tokens());
             let program = match parser.parse() {
                 Ok(ast) => ast,
                 Err(..) => std::process::exit(65),
@@ -57,7 +57,7 @@ fn main() {
             if !lexer.errors().is_empty() {
                 std::process::exit(65)
             }
-            let parser = Parser::no_ending_semicolons(lexer.tokens());
+            let mut parser = Parser::no_ending_semicolons(lexer.tokens());
             let program = match parser.parse() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
@@ -75,7 +75,7 @@ fn main() {
             if !lexer.errors().is_empty() {
                 std::process::exit(65)
             }
-            let parser = Parser::new(lexer.tokens());
+            let mut parser = Parser::new(lexer.tokens());
             let program = match parser.parse() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),

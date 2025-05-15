@@ -6,7 +6,7 @@ fn group() {
     let src = "(\"test\" +  234.0);";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -23,7 +23,7 @@ fn group_in_group() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -40,7 +40,7 @@ fn negate_and_not() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -57,7 +57,7 @@ fn basic_expr() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -74,7 +74,7 @@ fn nested_expr_pretty_basic_still_with_comments() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -91,7 +91,7 @@ fn basic_cmps_with_groups() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -108,7 +108,7 @@ fn var() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut blocks = program.decls().into_iter();
 
@@ -128,11 +128,13 @@ fn empty_print_err() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
-    let program = parser.parse();
+    let mut parser = Parser::new(lexer.tokens());
+    let errors = parser.parse().unwrap_err();
+    eprintln!("{errors:?}");
+    let mut errors = errors.iter();
     assert_eq!(
-        format!("{}", program.unwrap_err()),
-        "[line 1] Error at ';': Expect '(' ."
+        format!("{}", errors.next().unwrap()),
+        "[line 1] Error at ';': Expect expression."
     );
 }
 
@@ -144,7 +146,7 @@ fn var_assign() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut blocks = program.decls().iter();
 
@@ -170,7 +172,7 @@ fn nested_blocks() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut blocks = program.decls().iter();
 
@@ -195,12 +197,12 @@ fn unterminated_block() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
-    let parse_err = parser.parse().unwrap_err();
-
+    let mut parser = Parser::new(lexer.tokens());
+    let errors = parser.parse().unwrap_err();
+    let mut errors = errors.iter();
     assert_eq!(
-        format!("{parse_err}"),
-        "[line 7] Error at end: Expect '}' ."
+        format!("{}", errors.next().unwrap()),
+        "[line 7] Error at end: Expect '}' after block."
     );
 }
 
@@ -212,11 +214,89 @@ fn for_loop() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
         format!("{}", program.decls().iter().next().unwrap()),
         "(for ((varDecl foo 0.0);(< (varAccess foo) 3.0);;) (print (varAssign foo (+ (varAccess foo) 1.0))))"
+    );
+}
+
+#[test]
+fn for_loop_var_err() {
+    let mut lexer = Lexer::new();
+    let src = "for (;;) var foo;";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let errors = parser.parse().unwrap_err();
+
+    assert_eq!(
+        format!("{}", errors.iter().next().unwrap()),
+        "[line 1] Error at 'var': Expect expression."
+    );
+}
+
+#[test]
+fn if_else_err() {
+    let mut lexer = Lexer::new();
+    let src = r#"if (true) "ok"; else var foo;"#;
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let errors = parser.parse().unwrap_err();
+
+    assert_eq!(
+        format!("{}", errors.iter().next().unwrap()),
+        "[line 1] Error at 'var': Expect expression."
+    );
+}
+
+#[test]
+fn for_expr_error() {
+    let mut lexer = Lexer::new();
+    let src = "for (var a = 1; {}; a = a + 1) {}";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let mut errors = parser.parse().unwrap_err().iter();
+
+    assert_eq!(
+        format!("{}", errors.next().unwrap()),
+        "[line 1] Error at '{': Expect expression."
+    );
+
+    assert_eq!(
+        format!("{}", errors.next().unwrap()),
+        "[line 1] Error at ')': Expect ';' after expression."
+    );
+}
+
+#[test]
+fn for_expr_error_2() {
+    let mut lexer = Lexer::new();
+    let src = "for ({}; a < 2; a = a + 1) {}";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let mut errors = parser.parse().unwrap_err().iter();
+
+    assert_eq!(
+        format!("{}", errors.next().unwrap()),
+        "[line 1] Error at '{': Expect expression."
+    );
+
+    assert_eq!(
+        format!("{}", errors.next().unwrap()),
+        "[line 1] Error at ')': Expect ';' after expression."
     );
 }

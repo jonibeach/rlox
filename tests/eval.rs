@@ -19,7 +19,7 @@ fn bool() {
         .as_slice()
     );
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -38,7 +38,7 @@ fn nil() {
     let src = "nil;";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -52,7 +52,7 @@ fn unarys() {
     let src = "(!nil) == true;";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -66,7 +66,7 @@ fn numbers() {
     let src = "1+2*45;";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -80,7 +80,7 @@ fn neg_number() {
     let src = "-2;";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -94,7 +94,7 @@ fn neg_numbers_2() {
     let src = "1-2*45;";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -108,7 +108,7 @@ fn string_concat() {
     let src = "\"hello\"+\"hello\";";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -122,7 +122,7 @@ fn string_concat_groups() {
     let src = "(\"quz\" + \"baz\") + (\"quz\" + \"bar\");";
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -136,7 +136,7 @@ fn unary_expected_num() {
     let src = r#"-"test";"#;
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let err = executor.eval().unwrap_err();
@@ -151,7 +151,7 @@ fn expect_both_nums_or_strings() {
         "test" + 123.44;"#;
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut executor = Executor::with_stdout(program.decls());
     let err = executor.eval().unwrap_err();
@@ -178,7 +178,7 @@ fn print() {
         .as_slice()
     );
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     assert_eq!(
         format!("{}", program.decls().iter().next().unwrap()),
@@ -214,7 +214,7 @@ fn multiline_with_not_ascii() {
 
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
@@ -249,7 +249,7 @@ fn basic_vars() {
 
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut blocks = program.decls().iter();
 
@@ -292,7 +292,7 @@ fn basic_string_vars() {
 
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
@@ -319,7 +319,7 @@ fn basic_var_reassignment() {
 
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut blocks = program.decls().iter();
 
@@ -369,7 +369,7 @@ fn multi_variable_assignment() {
 
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
@@ -394,7 +394,7 @@ fn basic_if() {
 
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
@@ -422,7 +422,7 @@ fn many_ors() {
 
     lexer.lex(src);
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
@@ -448,7 +448,7 @@ fn for_loop() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let parser = Parser::new(lexer.tokens());
+    let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     let mut stdout: Vec<u8> = Vec::new();
