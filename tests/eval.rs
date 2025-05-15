@@ -439,3 +439,27 @@ fn many_ors() {
     assert_eq!(lines.next().unwrap(), "false");
     assert!(lines.next().is_none());
 }
+
+#[test]
+fn for_loop() {
+    let mut lexer = Lexer::new();
+    let src = "for (var foo = 0; foo < 3;) print foo = foo + 1;";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "1");
+    assert_eq!(lines.next().unwrap(), "2");
+    assert_eq!(lines.next().unwrap(), "3");
+    assert!(lines.next().is_none());
+}

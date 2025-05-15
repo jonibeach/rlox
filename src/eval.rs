@@ -185,20 +185,42 @@ impl<'e, T: Write> Executor<'e, T> {
         let primary = match node.kind() {
             AstKind::If {
                 condition,
-                inner,
+                body,
                 el,
             } => {
                 if self.truthiness(condition)? {
-                    self.eval_node(inner)?;
+                    self.eval_node(body)?;
                 } else if let Some(el) = el {
                     self.eval_node(el)?;
                 }
 
                 Primary::Bool(true)
             }
-            AstKind::While { condition, inner } => {
+            AstKind::For {
+                begin,
+                condition,
+                after_iter,
+                body,
+            } => {
+                if let Some(begin) = begin {
+                    self.eval_node(&begin)?;
+                }
+
+                while match condition {
+                    Some(c) => self.truthiness(&c)?,
+                    None => true,
+                } {
+                    self.eval_node(&body)?;
+                    if let Some(after_iter) = after_iter {
+                        self.eval_node(&after_iter)?;
+                    }
+                }
+
+                Primary::Bool(true)
+            }
+            AstKind::While { condition, body } => {
                 while self.truthiness(&condition)? {
-                    self.eval_node(&inner)?;
+                    self.eval_node(&body)?;
                 }
 
                 Primary::Bool(true)
@@ -345,6 +367,7 @@ impl<'e, T: Write> Executor<'e, T> {
         let res = match node.kind() {
             AstKind::If { .. } => true,
             AstKind::While { .. } => true,
+            AstKind::For { .. } => true,
             AstKind::Block(..) => true,
             AstKind::VarDecl(..) => true,
             AstKind::VarAssign(_, i) => {

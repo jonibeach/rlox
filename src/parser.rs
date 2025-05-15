@@ -108,15 +108,21 @@ type Child<'src> = Box<AstNode<'src>>;
 
 #[derive(Debug, PartialEq)]
 pub enum AstKind<'src> {
+    For {
+        begin: Option<Child<'src>>,
+        condition: Option<Child<'src>>,
+        after_iter: Option<Child<'src>>,
+        body: Child<'src>,
+    },
     Block(Vec<AstNode<'src>>),
     If {
         condition: Child<'src>,
-        inner: Child<'src>,
+        body: Child<'src>,
         el: Option<Child<'src>>,
     },
     While {
         condition: Child<'src>,
-        inner: Child<'src>,
+        body: Child<'src>,
     },
     VarAssign(&'src str, Child<'src>),
     VarDecl(&'src str, Child<'src>),
@@ -156,17 +162,35 @@ impl Display for AstKind<'_> {
             }
             Self::If {
                 condition,
-                inner,
+                body,
                 el,
             } => {
-                write!(f, "(if {condition} then {inner}")?;
+                write!(f, "(if {condition} then {body}")?;
                 if let Some(el) = el {
                     write!(f, " else {el}")?;
                 }
 
                 write!(f, ")")
             }
-            Self::While { condition, inner } => write!(f, "(while {condition} {inner})"),
+            Self::For {
+                begin,
+                condition,
+                after_iter,
+                body,
+            } => write!(
+                f,
+                "(for ({};{};{};) {body})",
+                begin.as_ref().map(|i| format!("{i}")).unwrap_or_default(),
+                condition
+                    .as_ref()
+                    .map(|i| format!("{i}"))
+                    .unwrap_or_default(),
+                after_iter
+                    .as_ref()
+                    .map(|i| format!("{i}"))
+                    .unwrap_or_default(),
+            ),
+            Self::While { condition, body } => write!(f, "(while {condition} {body})"),
             Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
             Self::VarDecl(ident, val) => write!(f, "(varDecl {ident} {val})"),
             Self::Print(i) => write!(f, "(print {i})"),
@@ -397,12 +421,15 @@ impl<'src> Parser<'src> {
     }
 
     /// statement      → exprStmt
-    ///                | ifStmt
-    ///                | printStmt
-    ///                | block
-    ///                | whileStmt ;
+    ///                 | forStmt
+    ///                 | ifStmt
+    ///                 | printStmt
+    ///                 | whileStmt
+    ///                 | block ;
     fn parse_stmt(&self) -> ParseResult<'src> {
         match self.peek() {
+            Some(Token::Keyword(Keyword::For)) => self.parse_for_stmt(),
+            Some(Token::Keyword(Keyword::If)) => self.parse_if_stmt(),
             Some(Token::Keyword(Keyword::Print)) => {
                 // printStmt      → "print" expression ";" ;
                 self.next().unwrap();
@@ -411,19 +438,74 @@ impl<'src> Parser<'src> {
 
                 Ok(AstKind::Print(expr.into()).into_ast(self))
             }
-            Some(Token::Keyword(Keyword::If)) => self.parse_if_stmt(),
-            Some(Token::LeftBrace) => self.parse_block(),
             Some(Token::Keyword(Keyword::While)) => self.parse_while_stmt(),
-            _ => {
-                // exprStmt       → expression ";" ;
-                let expr = self.parse_expr()?;
-                if self.force_ending_semicolon {
-                    self.expect(Token::Semicolon)?;
-                }
-
-                Ok(expr)
-            }
+            Some(Token::LeftBrace) => self.parse_block(),
+            _ => self.parse_expr_stmt(),
         }
+    }
+
+    /// exprStmt       → expression ";" ;
+    fn parse_expr_stmt(&self) -> ParseResult<'src> {
+        let expr = self.parse_expr()?;
+        if self.force_ending_semicolon {
+            self.expect(Token::Semicolon)?;
+        }
+
+        Ok(expr)
+    }
+
+    /// forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
+    ///                        expression? ";"
+    ///                        expression? ")" statement ;
+    fn parse_for_stmt(&self) -> ParseResult<'src> {
+        self.expect(Token::Keyword(Keyword::For))?;
+        eprintln!("parsing for stmt");
+        self.expect(Token::LeftParen)?;
+        let begin = self
+            .parse_var_decl()
+            .map(Into::into)
+            .map(Some)
+            .or_else(|_| self.parse_expr_stmt().map(Into::into).map(Some))
+            .or_else(|_| {
+                self.expect(Token::Semicolon)?;
+                Ok(None)
+            })?;
+        eprintln!(
+            "got begin {}",
+            begin.as_ref().map(|i| format!("{i}")).unwrap_or_default()
+        );
+
+        let condition = self.parse_expr().map(Into::into).ok();
+        self.expect(Token::Semicolon)?;
+        eprintln!(
+            "got cond {}",
+            condition
+                .as_ref()
+                .map(|i| format!("{i}"))
+                .unwrap_or_default()
+        );
+        let after_iter = self.parse_expr().map(Into::into).ok();
+        self.expect(Token::RightParen)?;
+
+        eprintln!(
+            "got after iter {}",
+            after_iter
+                .as_ref()
+                .map(|i| format!("{i}"))
+                .unwrap_or_default()
+        );
+
+        let body = self.parse_stmt()?.into();
+
+        eprintln!("got body {body}");
+
+        Ok(AstKind::For {
+            begin,
+            condition,
+            after_iter,
+            body,
+        }
+        .into_ast(self))
     }
 
     /// ifStmt         → "if" "(" expression ")" statement
@@ -433,7 +515,7 @@ impl<'src> Parser<'src> {
         self.expect(Token::LeftParen)?;
         let condition = self.parse_expr()?.into();
         self.expect(Token::RightParen)?;
-        let inner = self.parse_stmt()?.into();
+        let body = self.parse_stmt()?.into();
         let mut el = None;
 
         if let Some(Token::Keyword(Keyword::Else)) = self.peek() {
@@ -443,7 +525,7 @@ impl<'src> Parser<'src> {
         }
         Ok(AstKind::If {
             condition,
-            inner,
+            body,
             el,
         }
         .into_ast(self))
@@ -455,9 +537,9 @@ impl<'src> Parser<'src> {
         self.expect(Token::LeftParen)?;
         let condition = self.parse_expr()?.into();
         self.expect(Token::RightParen)?;
-        let inner = self.parse_stmt()?.into();
+        let body = self.parse_stmt()?.into();
 
-        Ok(AstKind::While { condition, inner }.into_ast(self))
+        Ok(AstKind::While { condition, body }.into_ast(self))
     }
 
     /// block          → "{" declaration* "}";

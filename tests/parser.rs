@@ -203,3 +203,20 @@ fn unterminated_block() {
         "[line 7] Error at end: Expect '}' ."
     );
 }
+
+#[test]
+fn for_loop() {
+    let mut lexer = Lexer::new();
+    let src = "for (var foo = 0; foo < 3;) print foo = foo + 1;";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+
+    assert_eq!(
+        format!("{}", program.decls().iter().next().unwrap()),
+        "(for ((varDecl foo 0.0);(< (varAccess foo) 3.0);;) (print (varAssign foo (+ (varAccess foo) 1.0))))"
+    );
+}
