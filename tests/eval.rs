@@ -463,3 +463,29 @@ fn for_loop() {
     assert_eq!(lines.next().unwrap(), "3");
     assert!(lines.next().is_none());
 }
+
+#[test]
+fn clock() {
+    let mut lexer = Lexer::new();
+    let src = "for (var foo = 0; foo < 5;foo=foo+1) print clock();";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert!(lines.next().unwrap().starts_with("174741"));
+    assert!(lines.next().unwrap().starts_with("174741"));
+    assert!(lines.next().unwrap().starts_with("174741"));
+    assert!(lines.next().unwrap().starts_with("174741"));
+    assert!(lines.next().unwrap().starts_with("174741"));
+    assert!(lines.next().is_none());
+}

@@ -292,12 +292,26 @@ impl<'e, T: Write> Executor<'e, T> {
                 UnaryOp::Not => Primary::Bool(!self.truthiness(i)?),
                 UnaryOp::Neg => Primary::Number((-self.as_num(i)?).into()),
             },
+            AstKind::Call(callee, args) => self.call(callee, args)?,
             AstKind::Group(i) => self.eval_node(i)?,
             AstKind::VariableAccess(ident) => self.resolve_var(node, ident)?.clone(),
             AstKind::Primary(p) => p.clone(),
         };
 
         Ok(primary)
+    }
+
+    fn call(&self, callee: &'e AstNode<'e>, _args: &[AstNode<'e>]) -> Result<'e, Primary<'e>> {
+        match callee.kind() {
+            AstKind::VariableAccess("clock") => Ok(Primary::Number(
+                (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as f64)
+                    .into(),
+            )),
+            _ => unimplemented!(),
+        }
     }
 
     fn as_num(&self, node: &'e AstNode<'e>) -> Result<'e, f64> {
@@ -330,6 +344,10 @@ impl<'e, T: Write> Executor<'e, T> {
                 }
             }
             AstKind::Primary(Primary::Number(n)) => Ok(n.into()),
+            AstKind::Call(callee, args) => match self.call(callee, args)? {
+                Primary::Number(n) => Ok(n.into()),
+                _ => self.err(node, ErrorKind::MustBeNumber),
+            },
             _ => self.err(node, ErrorKind::MustBeNumber),
         }
     }
@@ -378,6 +396,7 @@ impl<'e, T: Write> Executor<'e, T> {
                 self.eval_node(node)?;
                 self.truthiness(i)?
             }
+            AstKind::Call(callee, args) => Self::primary_truthiness(&self.call(callee, args)?),
             AstKind::Print(..) => true,
             AstKind::Or(a, b) => self.truthiness(a)? || self.truthiness(b)?,
             AstKind::And(a, b) => self.truthiness(a)? && self.truthiness(b)?,

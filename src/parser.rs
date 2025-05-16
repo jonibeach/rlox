@@ -136,6 +136,7 @@ pub enum AstKind<'src> {
     Unary(UnaryOp, Child<'src>),
     Group(Child<'src>),
     VariableAccess(&'src str),
+    Call(Child<'src>, Vec<AstNode<'src>>),
     Primary(Primary<'src>),
 }
 
@@ -211,6 +212,13 @@ impl Display for AstKind<'_> {
             Self::Unary(op, i) => write!(f, "({op} {i})"),
             Self::Group(g) => write!(f, "(group {g})",),
             Self::VariableAccess(ident) => write!(f, "(varAccess {ident})"),
+            Self::Call(ident, args) => {
+                write!(f, "(call {ident}")?;
+                for a in args {
+                    write!(f, " {a}")?;
+                }
+                write!(f, ")")
+            }
             Self::Primary(primary) => primary.fmt(f),
         }
     }
@@ -806,8 +814,7 @@ impl<'src> Parser<'src> {
         Ok(a)
     }
 
-    /// unary          → ( "!" | "-" ) unary
-    ///                | primary ;
+    /// unary          → ( "!" | "-" ) unary | call ;
     fn parse_unary(&self) -> ParseResult<'src> {
         let unary = self
             .accept(Token::Bang)
@@ -827,8 +834,50 @@ impl<'src> Parser<'src> {
             Ok(AstKind::Unary(op, self.parse_unary()?.into()).into_ast(self))
         } else {
             eprintln!("not unary {:?}", self.peek());
-            self.parse_primary()
+            self.parse_call()
         }
+    }
+
+    /// arguments      → expression ( "," expression )* ;
+    fn parse_arguments(&self) -> Result<'src, Vec<AstNode<'src>>> {
+        let mut args = Vec::new();
+
+        if let Ok(a) = self.parse_expr() {
+            args.push(a);
+        }
+
+        eprintln!("got first arg {args:?}");
+
+        while let Some(Token::Comma) = self.peek() {
+            self.next().unwrap();
+
+            eprintln!("getting another arg");
+            args.push(self.parse_expr()?);
+        }
+
+        eprintln!("args done {args:?}");
+
+        Ok(args)
+    }
+
+    /// call           → primary ( "(" arguments? ")" )* ;
+    fn parse_call(&self) -> ParseResult<'src> {
+        let mut call = self.parse_primary()?;
+
+        eprintln!("maybe parsing call {call}");
+
+        while self.accept(Token::LeftParen).is_some() {
+            eprintln!("parsing call");
+            let args = self.parse_arguments()?;
+            eprintln!("args {args:?} {:?}", self.peek());
+            self.expect_after(Token::RightParen, "arguments")?;
+
+            eprintln!("valid call");
+
+            call = AstKind::Call(call.into(), args).into_ast(self);
+        }
+
+        Ok(call)
     }
 
     /// accepts this part of primary
