@@ -136,7 +136,15 @@ pub enum AstKind<'src> {
     Unary(UnaryOp, Child<'src>),
     Group(Child<'src>),
     VariableAccess(&'src str),
-    Call(Child<'src>, Vec<AstNode<'src>>),
+    FunDecl {
+        name: &'src str,
+        params: Vec<&'src str>,
+        body: Child<'src>,
+    },
+    Call {
+        callee: Child<'src>,
+        args: Vec<AstNode<'src>>,
+    },
     Primary(Primary<'src>),
 }
 
@@ -212,8 +220,15 @@ impl Display for AstKind<'_> {
             Self::Unary(op, i) => write!(f, "({op} {i})"),
             Self::Group(g) => write!(f, "(group {g})",),
             Self::VariableAccess(ident) => write!(f, "(varAccess {ident})"),
-            Self::Call(ident, args) => {
-                write!(f, "(call {ident}")?;
+            Self::FunDecl { name, params, body } => {
+                write!(f, "(funDecl {name}")?;
+                for p in params {
+                    write!(f, " {p}")?;
+                }
+                write!(f, " {body})")
+            }
+            Self::Call { callee, args } => {
+                write!(f, "(call {callee}")?;
                 for a in args {
                     write!(f, " {a}")?;
                 }
@@ -398,7 +413,12 @@ impl<'src> Parser<'src> {
         None
     }
 
-    fn expect_custom<E>(&self, msg: &'static str) -> Result<'src, E> {
+    fn expect_custom(&self, token: Token<'src>, msg: &'static str) -> Result<'src, Token<'src>> {
+        self.accept(token)
+            .ok_or(self.err_inner(ErrorKind::Custom(msg)))
+    }
+
+    fn custom_err<E>(&self, msg: &'static str) -> Result<'src, E> {
         Err(self.err_inner(ErrorKind::Custom(msg)))
     }
 
@@ -631,11 +651,11 @@ impl<'src> Parser<'src> {
         Ok(AstKind::Block(decls).into_ast(self))
     }
 
-    /// declaration    → varDecl | statement | block;
+    /// declaration    → funDecl | varDecl | statement;
     fn parse_decl(&mut self) -> Option<AstNode<'src>> {
         eprintln!("parsing decl {:?}", self.peek());
         let maybe_decl = match self.next() {
-            Some(Token::LeftBrace) => self.parse_block(),
+            Some(Token::Keyword(Keyword::Fun)) => self.parse_fun_decl(),
             Some(Token::Keyword(Keyword::Var)) => self.parse_var_decl(),
             _ => {
                 self.prev().unwrap();
@@ -654,13 +674,57 @@ impl<'src> Parser<'src> {
         }
     }
 
+    // parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
+    fn parse_parameters(&self) -> Result<'src, Vec<&'src str>> {
+        let mut params = Vec::new();
+
+        if let Some(Token::Identifier(p)) = self.peek() {
+            params.push(p);
+        }
+
+        eprintln!("got first param {params:?}");
+
+        while let Some(Token::Comma) = self.peek() {
+            self.next().unwrap();
+
+            let Some(Token::Identifier(p)) = self.next() else {
+                return self.custom_err("parameter name");
+            };
+
+            eprintln!("getting another param {p}");
+            params.push(p);
+        }
+
+        eprintln!("params done {params:?}");
+
+        Ok(params)
+    }
+
+    /// funDecl        → "fun" function ;
+    /// function       → IDENTIFIER "(" parameters? ")" block ;
+    fn parse_fun_decl(&mut self) -> ParseResult<'src> {
+        let Some(Token::Identifier(name)) = self.next() else {
+            return self.custom_err("function name");
+        };
+
+        self.expect_after(Token::LeftParen, "function name")?;
+
+        let params = self.parse_parameters()?;
+
+        self.expect_after(Token::RightParen, "parameters")?;
+        self.expect_custom(Token::LeftBrace, "before function body")?;
+        let body = self.parse_block()?.into();
+
+        Ok(AstKind::FunDecl { name, params, body }.into_ast(self))
+    }
+
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
     fn parse_var_decl(&self) -> ParseResult<'src> {
         eprintln!("parsing var decl {:?}", self.peek());
 
         let Some(Token::Identifier(ident)) = self.next() else {
             eprintln!("didn't get ident");
-            return self.expect_custom("variable name");
+            return self.custom_err("variable name");
         };
 
         let var_decl = match self.next() {
@@ -874,7 +938,11 @@ impl<'src> Parser<'src> {
 
             eprintln!("valid call");
 
-            call = AstKind::Call(call.into(), args).into_ast(self);
+            call = AstKind::Call {
+                callee: call.into(),
+                args,
+            }
+            .into_ast(self);
         }
 
         Ok(call)
@@ -922,7 +990,7 @@ impl<'src> Parser<'src> {
                 eprintln!("going back at {:?}", self.peek());
                 self.prev().unwrap();
                 eprintln!("after goinf back {:?}", self.peek());
-                return self.expect_custom("expression");
+                return self.custom_err("expression");
             }
         };
 

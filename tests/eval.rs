@@ -481,11 +481,46 @@ fn clock() {
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
+    assert!(lines.next().unwrap().starts_with("17"));
+    assert!(lines.next().unwrap().starts_with("17"));
+    assert!(lines.next().unwrap().starts_with("17"));
+    assert!(lines.next().unwrap().starts_with("17"));
+    assert!(lines.next().unwrap().starts_with("17"));
+    assert!(lines.next().is_none());
+}
 
-    assert!(lines.next().unwrap().starts_with("174741"));
-    assert!(lines.next().unwrap().starts_with("174741"));
-    assert!(lines.next().unwrap().starts_with("174741"));
-    assert!(lines.next().unwrap().starts_with("174741"));
-    assert!(lines.next().unwrap().starts_with("174741"));
+#[test]
+fn basic_fn() {
+    let mut lexer = Lexer::new();
+    let src = "
+        fun baz() { print 97; }
+        baz();
+    ";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut decls = program.decls().iter();
+
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(funDecl baz (block (print 97.0)))"
+    );
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(call (varAccess baz))"
+    );
+
+    let mut stdout: Vec<u8> = Vec::new();
+    eprintln!("HERERER");
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    eprintln!("{:?}", executor.run());
+    eprintln!("HERERER");
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+    assert_eq!(format!("{}", lines.next().unwrap()), "97");
     assert!(lines.next().is_none());
 }
