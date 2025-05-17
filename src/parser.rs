@@ -1,4 +1,8 @@
-use std::{borrow::Cow, cell::Cell, fmt::Display};
+use std::{
+    borrow::Cow,
+    cell::Cell,
+    fmt::{Debug, Display},
+};
 
 use crate::{
     lexer::{Keyword, Symbol, Token},
@@ -91,6 +95,7 @@ pub enum Primary<'src> {
     Nil,
     Number(Number),
     String(Cow<'src, str>),
+    This,
 }
 
 impl Display for Primary<'_> {
@@ -98,77 +103,133 @@ impl Display for Primary<'_> {
         match self {
             Self::Bool(bool) => f.write_str(&bool.to_string()),
             Self::Nil => f.write_str("nil"),
-            Self::Number(n) => n.fmt(f),
-            Self::String(s) => s.fmt(f),
+            Self::Number(n) => write!(f, "{n}"),
+            Self::String(s) => write!(f, "{s}"),
+            Self::This => f.write_str("this"),
         }
     }
 }
 
-type Child<'src> = Box<AstNode<'src>>;
+pub type Block<'src> = AstNode<BlockInner<'src>>;
+#[derive(Debug)]
+pub struct BlockInner<'src> {
+    decls: Vec<Decl<'src>>,
+}
 
-#[derive(Debug, PartialEq)]
-pub enum AstKind<'src> {
-    For {
-        begin: Option<Child<'src>>,
-        condition: Option<Child<'src>>,
-        after_iter: Option<Child<'src>>,
-        body: Child<'src>,
-    },
-    Block(Vec<AstNode<'src>>),
-    If {
-        condition: Child<'src>,
-        body: Child<'src>,
-        el: Option<Child<'src>>,
-    },
-    While {
-        condition: Child<'src>,
-        body: Child<'src>,
-    },
-    VarAssign(&'src str, Child<'src>),
-    VarDecl(&'src str, Option<Child<'src>>),
-    Print(Child<'src>),
-    Or(Child<'src>, Child<'src>),
-    And(Child<'src>, Child<'src>),
-    Equality(Child<'src>, EqOp, Child<'src>),
-    Cmp(Child<'src>, CmpOp, Child<'src>),
-    Term(Child<'src>, TermOp, Child<'src>),
-    Factor(Child<'src>, FactorOp, Child<'src>),
-    Unary(UnaryOp, Child<'src>),
-    Group(Child<'src>),
-    VariableAccess(&'src str),
-    FunDecl {
+impl<'src> BlockInner<'src> {
+    pub fn decls(&self) -> &[Decl<'src>] {
+        &self.decls
+    }
+}
+
+impl Display for BlockInner<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(block")?;
+
+        for decl in &self.decls {
+            write!(f, " {decl}")?
+        }
+
+        write!(f, ")")
+    }
+}
+
+#[derive(Debug)]
+pub struct VarDecl<'src> {
+    pub name: &'src str,
+    pub value: Option<Expr<'src>>,
+}
+
+impl Display for VarDecl<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "(varDecl {}{})",
+            self.name,
+            if let Some(val) = &self.value {
+                format!(" {val}")
+            } else {
+                "".into()
+            }
+        )
+    }
+}
+
+pub type Decl<'src> = AstNode<DeclKind<'src>>;
+
+#[derive(Debug)]
+pub enum DeclKind<'src> {
+    Fun {
         name: &'src str,
         params: Vec<&'src str>,
-        body: Child<'src>,
+        body: Block<'src>,
     },
-    Call {
-        callee: Child<'src>,
-        args: Vec<AstNode<'src>>,
-    },
-    Primary(Primary<'src>),
+    Var(VarDecl<'src>),
+    Stmt(Stmt<'src>),
+    Expr(Expr<'src>),
 }
 
-impl<'src> AstKind<'src> {
-    fn into_ast(self, parser: &Parser) -> AstNode<'src> {
-        AstNode {
-            line: parser.line(),
-            kind: self,
+impl Display for DeclKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Var(v) => write!(f, "{v}"),
+            Self::Fun { name, params, body } => {
+                write!(f, "(funDecl {name}")?;
+                for p in params {
+                    write!(f, " {p}")?;
+                }
+                write!(f, " {body})")
+            }
+            Self::Stmt(s) => write!(f, "{s}"),
+            Self::Expr(e) => write!(f, "{e}"),
         }
     }
 }
 
-impl Display for AstKind<'_> {
+#[derive(Debug)]
+pub enum ForBegin<'src> {
+    VarDecl(VarDecl<'src>),
+    Expr(Expr<'src>),
+}
+
+impl Display for ForBegin<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Block(inners) => {
-                write!(f, "(block")?;
+            Self::VarDecl(v) => write!(f, "{v}"),
+            Self::Expr(e) => write!(f, "{e}"),
+        }
+    }
+}
 
-                for i in inners {
-                    write!(f, " {i}")?
-                }
+pub type Stmt<'src> = AstNode<StmtKind<'src>>;
 
-                write!(f, ")")
-            }
+#[derive(Debug)]
+pub enum StmtKind<'src> {
+    Expr(Expr<'src>),
+    For {
+        begin: Option<ForBegin<'src>>,
+        condition: Option<Expr<'src>>,
+        after_iter: Option<Expr<'src>>,
+        body: Box<Stmt<'src>>,
+    },
+    If {
+        condition: Expr<'src>,
+        body: Box<Stmt<'src>>,
+        el: Option<Box<Stmt<'src>>>,
+    },
+    While {
+        condition: Expr<'src>,
+        body: Box<Stmt<'src>>,
+    },
+    Print(Expr<'src>),
+    Return(Option<Expr<'src>>),
+    Block(Block<'src>),
+}
+
+impl Display for StmtKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Expr(e) => write!(f, "{e}"),
             Self::If {
                 condition,
                 body,
@@ -200,33 +261,52 @@ impl Display for AstKind<'_> {
                     .unwrap_or_default(),
             ),
             Self::While { condition, body } => write!(f, "(while {condition} {body})"),
-            Self::VarAssign(ident, val) => write!(f, "(varAssign {ident} {val})"),
-            Self::VarDecl(ident, val) => write!(
-                f,
-                "(varDecl {ident}{})",
-                if let Some(val) = val {
-                    format!(" {val}")
-                } else {
-                    "".into()
-                }
-            ),
+
             Self::Print(i) => write!(f, "(print {i})"),
+            Self::Return(expr) => {
+                write!(f, "(return")?;
+                if let Some(expr) = expr {
+                    write!(f, " {expr}")?;
+                }
+
+                write!(f, ")")
+            }
+            Self::Block(b) => write!(f, "{b}"),
+        }
+    }
+}
+
+pub type Expr<'src> = AstNode<ExprKind<'src>>;
+#[derive(Debug)]
+pub enum ExprKind<'src> {
+    Assign(&'src str, Box<Expr<'src>>),
+    Or(Box<Expr<'src>>, Box<Expr<'src>>),
+    And(Box<Expr<'src>>, Box<Expr<'src>>),
+    Eq(Box<Expr<'src>>, EqOp, Box<Expr<'src>>),
+    Cmp(Box<Expr<'src>>, CmpOp, Box<Expr<'src>>),
+    Term(Box<Expr<'src>>, TermOp, Box<Expr<'src>>),
+    Factor(Box<Expr<'src>>, FactorOp, Box<Expr<'src>>),
+    Unary(UnaryOp, Box<Expr<'src>>),
+    Call {
+        callee: Box<Expr<'src>>,
+        args: Vec<Expr<'src>>,
+    },
+    Group(Box<Expr<'src>>),
+    Ident(&'src str),
+    Primary(Primary<'src>),
+}
+
+impl Display for ExprKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Assign(ident, val) => write!(f, "(assign {ident} {val})"),
             Self::Or(a, b) => write!(f, "(or {a} {b})"),
             Self::And(a, b) => write!(f, "(and {a} {b})"),
-            Self::Equality(a, op, b) => write!(f, "({op} {a} {b})"),
+            Self::Eq(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Cmp(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Term(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Factor(a, op, b) => write!(f, "({op} {a} {b})"),
             Self::Unary(op, i) => write!(f, "({op} {i})"),
-            Self::Group(g) => write!(f, "(group {g})",),
-            Self::VariableAccess(ident) => write!(f, "(varAccess {ident})"),
-            Self::FunDecl { name, params, body } => {
-                write!(f, "(funDecl {name}")?;
-                for p in params {
-                    write!(f, " {p}")?;
-                }
-                write!(f, " {body})")
-            }
             Self::Call { callee, args } => {
                 write!(f, "(call {callee}")?;
                 for a in args {
@@ -234,25 +314,41 @@ impl Display for AstKind<'_> {
                 }
                 write!(f, ")")
             }
-            Self::Primary(primary) => primary.fmt(f),
+            Self::Group(g) => write!(f, "(group {g})"),
+            Self::Ident(i) => write!(f, "(ident {i})"),
+            Self::Primary(p) => write!(f, "{p}"),
+        }
+    }
+}
+
+trait IntoAst: Sized {
+    fn into_ast(self, parser: &Parser) -> AstNode<Self>;
+}
+
+impl<T> IntoAst for T {
+    fn into_ast(self, parser: &Parser) -> AstNode<T> {
+        AstNode {
+            line: parser.line(),
+            kind: self,
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct AstNode<'src> {
+pub struct AstNode<K> {
     line: usize,
-    kind: AstKind<'src>,
+    kind: K,
 }
 
-impl Display for AstNode<'_> {
+impl<K: Display> Display for AstNode<K> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // write!(f, "[line {}] {}", self.line + 1, self.kind)
         self.kind.fmt(f)
     }
 }
 
-impl<'src> AstNode<'src> {
-    pub fn kind(&self) -> &AstKind<'src> {
+impl<K> AstNode<K> {
+    pub fn kind(&self) -> &K {
         &self.kind
     }
 
@@ -262,13 +358,11 @@ impl<'src> AstNode<'src> {
 }
 
 #[derive(Debug)]
-pub struct Program<'src> {
-    decls: Vec<AstNode<'src>>,
-}
+pub struct Program<'src>(Block<'src>);
 
 impl<'src> Program<'src> {
-    pub fn decls(&self) -> &[AstNode<'src>] {
-        &self.decls
+    pub fn decls(&self) -> &[Decl<'src>] {
+        &self.0.kind.decls
     }
 }
 
@@ -325,7 +419,6 @@ impl std::error::Error for Error<'_> {}
 type Result<'src, T> = std::result::Result<T, Error<'src>>;
 type AcceptToken<'src> = Option<Token<'src>>;
 type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
-type ParseResult<'src> = Result<'src, AstNode<'src>>;
 
 /// Parses the lox programming language using a recursive descent approach based on Lox's grammar rules
 ///
@@ -474,7 +567,7 @@ impl<'src> Parser<'src> {
         if !self.errors.is_empty() {
             Err(&self.errors)
         } else {
-            Ok(Program { decls })
+            Ok(Program(BlockInner { decls }.into_ast(self)))
         }
     }
 
@@ -482,9 +575,10 @@ impl<'src> Parser<'src> {
     ///                 | forStmt
     ///                 | ifStmt
     ///                 | printStmt
+    ///                 | returnStmt
     ///                 | whileStmt
     ///                 | block ;
-    fn parse_stmt(&mut self) -> ParseResult<'src> {
+    fn parse_stmt(&mut self) -> Result<'src, Stmt<'src>> {
         eprintln!("parsing stmt {:?}", self.peek());
         match self.next() {
             Some(Token::Keyword(Keyword::For)) => self.parse_for_stmt(),
@@ -495,19 +589,28 @@ impl<'src> Parser<'src> {
                 let expr = self.parse_expr()?;
                 self.expect_after(Token::Semicolon, "value")?;
 
-                Ok(AstKind::Print(expr.into()).into_ast(self))
+                Ok(StmtKind::Print(expr).into_ast(self))
+            }
+            Some(Token::Keyword(Keyword::Return)) => {
+                // returnStmt     → "return" expression? ";" ;
+
+                eprintln!("parsing return stmt");
+                let expr = self.parse_expr().ok();
+                self.expect_after(Token::Semicolon, "return value")?;
+
+                Ok(StmtKind::Return(expr).into_ast(self))
             }
             Some(Token::Keyword(Keyword::While)) => self.parse_while_stmt(),
-            Some(Token::LeftBrace) => self.parse_block(),
+            Some(Token::LeftBrace) => Ok(StmtKind::Block(self.parse_block()?).into_ast(self)),
             _ => {
                 self.prev().unwrap();
-                self.parse_expr_stmt()
+                Ok(StmtKind::Expr(self.parse_expr_stmt()?).into_ast(self))
             }
         }
     }
 
     /// exprStmt       → expression ";" ;
-    fn parse_expr_stmt(&self) -> ParseResult<'src> {
+    fn parse_expr_stmt(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parsing expr stmt");
         let expr = self.parse_expr()?;
         if self.force_ending_semicolon {
@@ -522,7 +625,7 @@ impl<'src> Parser<'src> {
     /// forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
     ///                        expression? ";"
     ///                        expression? ")" statement ;
-    fn parse_for_stmt(&mut self) -> ParseResult<'src> {
+    fn parse_for_stmt(&mut self) -> Result<'src, Stmt<'src>> {
         self.expect_after_token(Token::LeftParen)?;
         eprintln!("parsing for stmt {:?}", self.peek());
         let begin = match self.next() {
@@ -530,16 +633,13 @@ impl<'src> Parser<'src> {
                 eprintln!("got empty begin");
                 None
             }
-            other => Some(
-                match other {
-                    Some(Token::Keyword(Keyword::Var)) => self.parse_var_decl()?,
-                    _ => {
-                        self.prev().unwrap();
-                        self.parse_expr_stmt()?
-                    }
+            other => Some(match other {
+                Some(Token::Keyword(Keyword::Var)) => ForBegin::VarDecl(self.parse_var_decl()?),
+                _ => {
+                    self.prev().unwrap();
+                    ForBegin::Expr(self.parse_expr_stmt()?)
                 }
-                .into(),
-            ),
+            }),
         };
 
         eprintln!(
@@ -550,8 +650,9 @@ impl<'src> Parser<'src> {
 
         let condition = match (self.parse_expr(), self.next()) {
             (Err(_), Some(Token::Semicolon)) => None,
-            (Ok(c), Some(Token::Semicolon)) => Some(c.into()),
-            (res, _) => return res,
+            (Ok(c), Some(Token::Semicolon)) => Some(c),
+            (Ok(_), _) => return self.err(ErrorKind::TokenAfter(Token::Semicolon, "condition")),
+            (Err(e), _) => return Err(e),
         };
 
         eprintln!("HERR {:?} {:?}", self.peek(), condition);
@@ -563,7 +664,7 @@ impl<'src> Parser<'src> {
                 .map(|i| format!("{i}"))
                 .unwrap_or_default()
         );
-        let after_iter = self.parse_expr().ok().map(Into::into);
+        let after_iter = self.parse_expr().ok();
         self.expect_after(Token::RightParen, "for clauses")?;
 
         eprintln!(
@@ -578,7 +679,7 @@ impl<'src> Parser<'src> {
 
         eprintln!("got body {body}");
 
-        Ok(AstKind::For {
+        Ok(StmtKind::For {
             begin,
             condition,
             after_iter,
@@ -589,9 +690,9 @@ impl<'src> Parser<'src> {
 
     /// ifStmt         → "if" "(" expression ")" statement
     ///              ( "else" statement )? ;
-    fn parse_if_stmt(&mut self) -> ParseResult<'src> {
+    fn parse_if_stmt(&mut self) -> Result<'src, Stmt<'src>> {
         self.expect_after_token(Token::LeftParen)?;
-        let condition = self.parse_expr()?.into();
+        let condition = self.parse_expr()?;
         self.expect_after(Token::RightParen, "if condition")?;
         let body = self.parse_stmt()?.into();
         let mut el = None;
@@ -602,7 +703,7 @@ impl<'src> Parser<'src> {
             el = Some(else_inner.into())
         }
 
-        Ok(AstKind::If {
+        Ok(StmtKind::If {
             condition,
             body,
             el,
@@ -611,17 +712,17 @@ impl<'src> Parser<'src> {
     }
 
     /// whileStmt      → "while" "(" expression ")" statement ;
-    fn parse_while_stmt(&mut self) -> ParseResult<'src> {
+    fn parse_while_stmt(&mut self) -> Result<'src, Stmt<'src>> {
         self.expect_after_token(Token::LeftParen)?;
-        let condition = self.parse_expr()?.into();
+        let condition = self.parse_expr()?;
         self.expect_after(Token::RightParen, "condition")?;
         let body = self.parse_stmt()?.into();
 
-        Ok(AstKind::While { condition, body }.into_ast(self))
+        Ok(StmtKind::While { condition, body }.into_ast(self))
     }
 
     /// block          → "{" declaration* "}";
-    fn parse_block(&mut self) -> ParseResult<'src> {
+    fn parse_block(&mut self) -> Result<'src, Block<'src>> {
         eprintln!("parsing block");
 
         let mut decls = Vec::new();
@@ -638,18 +739,20 @@ impl<'src> Parser<'src> {
 
         eprintln!("valid block");
 
-        Ok(AstKind::Block(decls).into_ast(self))
+        Ok(BlockInner { decls }.into_ast(self))
     }
 
     /// declaration    → funDecl | varDecl | statement;
-    fn parse_decl(&mut self) -> Option<AstNode<'src>> {
+    fn parse_decl(&mut self) -> Option<Decl<'src>> {
         eprintln!("parsing decl {:?}", self.peek());
         let maybe_decl = match self.next() {
             Some(Token::Keyword(Keyword::Fun)) => self.parse_fun_decl(),
-            Some(Token::Keyword(Keyword::Var)) => self.parse_var_decl(),
+            Some(Token::Keyword(Keyword::Var)) => self
+                .parse_var_decl()
+                .map(|v| DeclKind::Var(v).into_ast(self)),
             _ => {
                 self.prev().unwrap();
-                self.parse_stmt()
+                self.parse_stmt().map(|s| DeclKind::Stmt(s).into_ast(self))
             }
         };
 
@@ -693,7 +796,7 @@ impl<'src> Parser<'src> {
 
     /// funDecl        → "fun" function ;
     /// function       → IDENTIFIER "(" parameters? ")" block ;
-    fn parse_fun_decl(&mut self) -> ParseResult<'src> {
+    fn parse_fun_decl(&mut self) -> Result<'src, Decl<'src>> {
         let Some(Token::Identifier(name)) = self.next() else {
             return self.custom_err("function name");
         };
@@ -706,16 +809,18 @@ impl<'src> Parser<'src> {
 
         self.expect_after(Token::RightParen, "parameters")?;
         self.expect_custom(Token::LeftBrace, "before function body")?;
-        let body = self.parse_block()?.into();
+        let body = self.parse_block()?;
 
-        Ok(AstKind::FunDecl { name, params, body }.into_ast(self))
+        eprintln!("parsed block body {body}");
+
+        Ok(DeclKind::Fun { name, params, body }.into_ast(self))
     }
 
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
-    fn parse_var_decl(&self) -> ParseResult<'src> {
+    fn parse_var_decl(&self) -> Result<'src, VarDecl<'src>> {
         eprintln!("parsing var decl {:?}", self.peek());
 
-        let Some(Token::Identifier(ident)) = self.next() else {
+        let Some(Token::Identifier(name)) = self.next() else {
             eprintln!("didn't get ident");
             return self.custom_err("variable name");
         };
@@ -727,9 +832,11 @@ impl<'src> Parser<'src> {
 
                 eprintln!("got decl with value {value}");
 
-                AstKind::VarDecl(ident, Some(value.into()))
+                let value = value.into();
+
+                VarDecl { name, value }
             }
-            Some(Token::Semicolon) => AstKind::VarDecl(ident, None),
+            Some(Token::Semicolon) => VarDecl { name, value: None },
             other => {
                 eprintln!("got non equal {other:?}");
                 return self.err(ErrorKind::TokenAfter(
@@ -739,17 +846,17 @@ impl<'src> Parser<'src> {
             }
         };
 
-        Ok(var_decl.into_ast(self))
+        Ok(var_decl)
     }
 
     /// expression     → logic_or ;
-    fn parse_expr(&self) -> ParseResult<'src> {
+    fn parse_expr(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parsing expr");
         self.parse_logic_or()
     }
 
     // logic_or       → logic_and ( "or" logic_and )* ;
-    fn parse_logic_or(&self) -> ParseResult<'src> {
+    fn parse_logic_or(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parsing logic or");
         let mut a = self.parse_logic_and()?;
         eprintln!("parsed logic or {a}");
@@ -758,7 +865,7 @@ impl<'src> Parser<'src> {
             self.next().unwrap();
             let b = self.parse_logic_and()?;
 
-            a = AstKind::Or(a.into(), b.into()).into_ast(self);
+            a = ExprKind::Or(a.into(), b.into()).into_ast(self);
         }
 
         eprintln!("done with logic or {a}");
@@ -767,7 +874,7 @@ impl<'src> Parser<'src> {
     }
 
     /// logic_and      → equality ( "and" equality )* ;
-    fn parse_logic_and(&self) -> ParseResult<'src> {
+    fn parse_logic_and(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parsing logic and");
         let mut a = self.parse_eq()?;
 
@@ -777,7 +884,7 @@ impl<'src> Parser<'src> {
             self.next().unwrap();
             let b = self.parse_eq()?;
 
-            a = AstKind::And(a.into(), b.into()).into_ast(self);
+            a = ExprKind::And(a.into(), b.into()).into_ast(self);
         }
 
         eprintln!("done with logic and {a}");
@@ -786,7 +893,7 @@ impl<'src> Parser<'src> {
     }
 
     /// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-    fn parse_eq(&self) -> ParseResult<'src> {
+    fn parse_eq(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parsing eq");
         let mut a = self.parse_cmp()?;
 
@@ -800,7 +907,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_cmp()?;
             eprintln!("accepted eq {a} {op:?} {b}");
-            a = AstKind::Equality(a.into(), op, b.into()).into_ast(self);
+            a = ExprKind::Eq(a.into(), op, b.into()).into_ast(self);
         }
 
         eprintln!("done with eq {a}");
@@ -809,7 +916,7 @@ impl<'src> Parser<'src> {
     }
 
     /// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-    fn parse_cmp(&self) -> ParseResult<'src> {
+    fn parse_cmp(&self) -> Result<'src, Expr<'src>> {
         let mut a = self.parse_term()?;
 
         eprintln!("parsing cmp {a}");
@@ -826,14 +933,14 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_term()?;
             eprintln!("accepted cmp {a} {op:?} {b}");
-            a = AstKind::Cmp(a.into(), op, b.into()).into_ast(self);
+            a = ExprKind::Cmp(a.into(), op, b.into()).into_ast(self);
         }
 
         Ok(a)
     }
 
     /// term           → factor ( ( "-" | "+" ) factor )* ;
-    fn parse_term(&self) -> ParseResult<'src> {
+    fn parse_term(&self) -> Result<'src, Expr<'src>> {
         let mut a = self.parse_factor()?;
         eprintln!("parsing term {a}");
 
@@ -845,14 +952,14 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_factor()?;
             eprintln!("accepted term {a} {op:?} {b}");
-            a = AstKind::Term(a.into(), op, b.into()).into_ast(self);
+            a = ExprKind::Term(a.into(), op, b.into()).into_ast(self);
         }
 
         Ok(a)
     }
 
     /// factor         → unary ( ( "/" | "*" ) unary )* ;
-    fn parse_factor(&self) -> ParseResult<'src> {
+    fn parse_factor(&self) -> Result<'src, Expr<'src>> {
         let mut a = self.parse_unary()?;
 
         eprintln!("parsing factor {a}");
@@ -865,14 +972,14 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_unary()?;
             eprintln!("accepted factor {a} {op:?} {b}");
-            a = AstKind::Factor(a.into(), op, b.into()).into_ast(self)
+            a = ExprKind::Factor(a.into(), op, b.into()).into_ast(self)
         }
 
         Ok(a)
     }
 
     /// unary          → ( "!" | "-" ) unary | call ;
-    fn parse_unary(&self) -> ParseResult<'src> {
+    fn parse_unary(&self) -> Result<'src, Expr<'src>> {
         let unary = self
             .accept(Token::Bang)
             .or_else(|| self.accept(Token::Minus));
@@ -888,7 +995,7 @@ impl<'src> Parser<'src> {
 
             eprintln!("accepted unary {op} {unary}");
 
-            Ok(AstKind::Unary(op, self.parse_unary()?.into()).into_ast(self))
+            Ok(ExprKind::Unary(op, self.parse_unary()?.into()).into_ast(self))
         } else {
             eprintln!("not unary {:?}", self.peek());
             self.parse_call()
@@ -896,7 +1003,7 @@ impl<'src> Parser<'src> {
     }
 
     /// arguments      → expression ( "," expression )* ;
-    fn parse_arguments(&self) -> Result<'src, Vec<AstNode<'src>>> {
+    fn parse_arguments(&self) -> Result<'src, Vec<Expr<'src>>> {
         let mut args = Vec::new();
 
         if let Ok(a) = self.parse_expr() {
@@ -918,7 +1025,7 @@ impl<'src> Parser<'src> {
     }
 
     /// call           → primary ( "(" arguments? ")" )* ;
-    fn parse_call(&self) -> ParseResult<'src> {
+    fn parse_call(&self) -> Result<'src, Expr<'src>> {
         let mut call = self.parse_primary()?;
 
         eprintln!("maybe parsing call {call}");
@@ -931,7 +1038,7 @@ impl<'src> Parser<'src> {
 
             eprintln!("valid call");
 
-            call = AstKind::Call {
+            call = ExprKind::Call {
                 callee: call.into(),
                 args,
             }
@@ -943,7 +1050,7 @@ impl<'src> Parser<'src> {
 
     /// accepts this part of primary
     ///     "(" expression ")"
-    fn parse_group(&self) -> ParseResult<'src> {
+    fn parse_group(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parsing group");
 
         let inner = self.parse_expr()?;
@@ -952,12 +1059,12 @@ impl<'src> Parser<'src> {
 
         eprintln!("parsing group DONE");
 
-        Ok(AstKind::Group(inner.into()).into_ast(self))
+        Ok(ExprKind::Group(inner.into()).into_ast(self))
     }
 
     /// primary        → NUMBER | STRING | "true" | "false" | "nil"
     ///                 | "(" expression ")" | IDENTIFIER "=" expression
-    fn parse_primary(&self) -> ParseResult<'src> {
+    fn parse_primary(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parisng primary {:?}", self.peek());
         let ast = match self.next() {
             Some(Token::Number(n, _)) => Primary::Number(n),
@@ -971,9 +1078,9 @@ impl<'src> Parser<'src> {
                     self.next().unwrap();
                     let inner = self.parse_expr()?;
 
-                    return Ok(AstKind::VarAssign(i, inner.into()).into_ast(self));
+                    return Ok(ExprKind::Assign(i, inner.into()).into_ast(self));
                 } else {
-                    return Ok(AstKind::VariableAccess(i).into_ast(self));
+                    return Ok(ExprKind::Ident(i).into_ast(self));
                 }
             }
             Some(Token::LeftParen) => {
@@ -989,6 +1096,6 @@ impl<'src> Parser<'src> {
 
         eprintln!("accepted primary {ast}");
 
-        Ok(AstKind::Primary(ast).into_ast(self))
+        Ok(ExprKind::Primary(ast).into_ast(self))
     }
 }

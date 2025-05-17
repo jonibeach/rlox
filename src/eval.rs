@@ -1,6 +1,9 @@
 use std::{borrow::Cow, cell::Cell, collections::HashMap, fmt::Display, io::Write};
 
-use crate::parser::{AstKind, AstNode, CmpOp, EqOp, FactorOp, Primary, TermOp, UnaryOp};
+use crate::parser::{
+    AstNode, CmpOp, Decl, DeclKind, EqOp, Expr, ExprKind, FactorOp, ForBegin, Primary, Stmt,
+    StmtKind, TermOp, UnaryOp, VarDecl,
+};
 
 #[derive(Debug)]
 pub enum ErrorKind<'e> {
@@ -11,6 +14,7 @@ pub enum ErrorKind<'e> {
     StackOverflow,
     NotCallable,
     NotEnoughParams,
+    Return(Value<'e>),
     Io(std::io::Error),
 }
 
@@ -49,6 +53,7 @@ impl Display for Error<'_> {
             ErrorKind::NotEnoughParams => "Not enough params".into(),
             ErrorKind::StackOverflow => "Stack overflow.".into(),
             ErrorKind::Io(..) => "IO error".into(),
+            ErrorKind::Return(..) => unreachable!(),
         };
 
         writeln!(f, "{msg}")?;
@@ -61,59 +66,82 @@ pub type Result<'e, T> = std::result::Result<T, Error<'e>>;
 const STACK_SIZE: usize = 1 << 12;
 
 #[derive(Debug, Clone)]
-enum Value<'e> {
+pub enum Value<'e> {
     Primary(Primary<'e>),
     NativeFunction(fn() -> Value<'e>),
     Function {
         name: &'e str,
         params: &'e [&'e str],
-        body: &'e AstNode<'e>,
+        body: &'e [Decl<'e>],
     },
 }
 
 impl<'e> Value<'e> {
     fn call<T: Write>(
         &self,
-        node: &'e AstNode<'e>,
-        args: &'e [AstNode<'e>],
+        args: &'e [Expr<'e>],
         executor: &mut Executor<'e, T>,
     ) -> Result<'e, Self> {
-        eprintln!("calling {self}");
         match self {
             Self::NativeFunction(f) => Ok(f()),
             Self::Function { name, params, body } => {
-                eprintln!("calling fn {name}");
-                executor.incr_stack_frame(node)?;
-
                 let mut args = args.iter();
 
+                let mut initial_vars = HashMap::new();
                 for p in &params[..] {
                     let arg = match args.next() {
                         Some(a) => a,
-                        None => return Err(executor.err_inner(node, ErrorKind::NotEnoughParams)),
+                        None => return Err(executor.err_inner(ErrorKind::NotEnoughParams)),
                     };
 
-                    let val = executor.eval_node(arg)?;
+                    let val = executor.eval_expr(arg)?;
 
-                    eprintln!("setting param {p} to {val}");
-
-                    executor.current_stack_frame().insert(p, val);
+                    initial_vars.insert(*p, val);
                 }
 
-                let res = executor.eval_node(body)?;
+                eprintln!("evaling fn {name} with initial vars {initial_vars:?}");
+                let ret = match executor.eval_block(*body, Some(initial_vars)) {
+                    Ok(..) => Primary::Nil.into(),
+                    Err(Error {
+                        kind: ErrorKind::Return(ret),
+                        ..
+                    }) => {
+                        eprintln!(
+                            "returned {ret} from fn call {name} with params {:?}",
+                            params
+                                .iter()
+                                .filter_map(|p| executor.resolve_var(p).ok())
+                                .map(|v| format!("{v}"))
+                                .collect::<Vec<_>>()
+                        );
+                        executor.decr_stack_frame();
+                        ret
+                    }
+                    Err(e) => return Err(e),
+                };
 
-                eprintln!("got res {res}");
-
-                executor.decr_stack_frame();
-
-                Ok(res)
+                Ok(ret)
             }
-            Self::Primary(..) => executor.err(node, ErrorKind::NotCallable),
+            Self::Primary(..) => executor.err(ErrorKind::NotCallable),
         }
     }
 
     fn truthiness(&self) -> bool {
         !matches!(self, Self::Primary(Primary::Nil | Primary::Bool(false)))
+    }
+
+    fn as_num<T: Write>(&self, executor: &Executor<'e, T>) -> Result<'e, f64> {
+        match self {
+            Self::Primary(Primary::Number(n)) => Ok(n.into()),
+            _ => executor.err(ErrorKind::MustBeNumber),
+        }
+    }
+
+    fn as_str(&self) -> Option<&std::borrow::Cow<'e, str>> {
+        match self {
+            Self::Primary(Primary::String(s)) => Some(s),
+            _ => None,
+        }
     }
 }
 
@@ -134,20 +162,21 @@ impl Display for Value<'_> {
 }
 
 pub struct Executor<'e, T> {
-    program: &'e [AstNode<'e>],
+    program: &'e [Decl<'e>],
     stack: [Option<HashMap<&'e str, Value<'e>>>; STACK_SIZE],
     stack_ptr: Cell<usize>,
+    line: Cell<usize>,
     stdout: T,
 }
 
 impl<'e> Executor<'e, std::io::Stdout> {
-    pub fn with_stdout(program: &'e [AstNode<'e>]) -> Self {
+    pub fn with_stdout(program: &'e [Decl<'e>]) -> Self {
         Self::new(program, std::io::stdout())
     }
 }
 
 impl<'e, T: Write> Executor<'e, T> {
-    pub fn new(program: &'e [AstNode<'e>], stdout: T) -> Self {
+    pub fn new(program: &'e [Decl<'e>], stdout: T) -> Self {
         let mut stack = [const { None }; STACK_SIZE];
 
         let mut globals = HashMap::new();
@@ -170,56 +199,37 @@ impl<'e, T: Write> Executor<'e, T> {
             program,
             stdout,
             stack,
+            line: 0.into(),
             stack_ptr: 0.into(),
         }
     }
 
-    pub fn eval(&mut self) -> Result<'e, String> {
-        let p = self.eval_primary()?;
-
-        if let Some(p) = p {
-            Ok(Self::print_value(p))
-        } else {
-            Ok(String::new())
-        }
+    fn err_inner(&self, kind: ErrorKind<'e>) -> Error<'e> {
+        Error::new(self.line.get(), kind)
     }
-
-    pub fn run(&mut self) -> Result<'e, ()> {
-        self.eval()?;
-
-        Ok(())
-    }
-
-    fn eval_primary(&mut self) -> Result<'e, Option<Value<'e>>> {
-        let mut res = None;
-        eprintln!("evaling program");
-        for declr in self.program {
-            eprintln!("evaling declr {declr}");
-            res = Some(self.eval_node(declr)?);
-        }
-
-        Ok(res)
-    }
-
-    fn err_inner(&self, node: &'e AstNode<'e>, kind: ErrorKind<'e>) -> Error<'e> {
-        Error::new(node.line(), kind)
-    }
-    fn err<E>(&self, node: &'e AstNode<'e>, kind: ErrorKind<'e>) -> Result<'e, E> {
-        Err(self.err_inner(node, kind))
+    fn err<E>(&self, kind: ErrorKind<'e>) -> Result<'e, E> {
+        Err(self.err_inner(kind))
     }
 
     fn decr_stack_frame(&mut self) {
         *self.current_stack_frame_inner() = None;
+        eprintln!("decring stack frame {}", self.stack_ptr.get());
         self.stack_ptr.set(self.stack_ptr.get() - 1);
     }
 
-    fn incr_stack_frame(&mut self, node: &'e AstNode<'e>) -> Result<'e, ()> {
+    fn incr_stack_frame(&mut self, vars: Option<HashMap<&'e str, Value<'e>>>) -> Result<'e, ()> {
         let curr = self.stack_ptr.get();
         if curr < STACK_SIZE {
+            eprintln!("incring stack frame {}", self.stack_ptr.get());
             self.stack_ptr.set(curr + 1);
+
+            if let Some(vars) = vars {
+                *self.current_stack_frame_inner() = Some(vars)
+            }
+
             Ok(())
         } else {
-            self.err(node, ErrorKind::StackOverflow)
+            self.err(ErrorKind::StackOverflow)
         }
     }
 
@@ -251,26 +261,20 @@ impl<'e, T: Write> Executor<'e, T> {
         })
     }
 
-    fn resolve_var(&self, node: &'e AstNode<'e>, ident: &'e str) -> Result<'e, &Value<'e>> {
+    fn resolve_var(&self, ident: &'e str) -> Result<'e, &Value<'e>> {
         if let Some(i) = self.find_var_frame(ident) {
             let v = self.stack[i].as_ref().unwrap().get(ident).unwrap();
-            eprintln!("resolved var {ident} to {v}");
             return Ok(v);
         }
-        self.err(node, ErrorKind::UndefinedVariable(ident))
+        self.err(ErrorKind::UndefinedVariable(ident))
     }
 
-    fn resolve_var_mut(
-        &mut self,
-        node: &'e AstNode<'e>,
-        ident: &'e str,
-    ) -> Result<'e, &mut Value<'e>> {
+    fn resolve_var_mut(&mut self, ident: &'e str) -> Result<'e, &mut Value<'e>> {
         if let Some(i) = self.find_var_frame(ident) {
             let v = self.stack[i].as_mut().unwrap().get_mut(ident).unwrap();
-            eprintln!("resolved var {ident} to {v} (mutably)");
             return Ok(v);
         }
-        self.err(node, ErrorKind::UndefinedVariable(ident))
+        self.err(ErrorKind::UndefinedVariable(ident))
     }
 
     fn print_value(p: Value<'e>) -> String {
@@ -280,267 +284,249 @@ impl<'e, T: Write> Executor<'e, T> {
         }
     }
 
-    fn eval_node(&mut self, node: &'e AstNode<'e>) -> Result<'e, Value<'e>> {
-        eprintln!("eval {node}");
-        let value = match node.kind() {
-            AstKind::If {
-                condition,
-                body,
-                el,
-            } => {
-                if self.truthiness(condition)? {
-                    self.eval_node(body)?;
-                } else if let Some(el) = el {
-                    self.eval_node(el)?;
-                }
+    pub fn eval(&mut self) -> Result<'e, String> {
+        let expr = match self.program.first().unwrap().kind() {
+            DeclKind::Expr(expr) => Some(expr),
+            DeclKind::Stmt(d) => match d.kind() {
+                StmtKind::Expr(e) => Some(e),
+                _ => None,
+            },
+            _ => None,
+        };
 
-                Primary::Bool(true).into()
+        let expr = expr.expect("eval only supports programs with one expression");
+
+        Ok(format!("{}", Self::print_value(self.eval_expr(expr)?)))
+    }
+
+    pub fn run(&mut self) -> Result<'e, ()> {
+        for decl in self.program {
+            self.eval_decl(decl)?;
+        }
+
+        Ok(())
+    }
+
+    fn set_line<A>(&self, node: &'e AstNode<A>) {
+        self.line.set(node.line());
+    }
+
+    fn eval_var_decl(&mut self, var_decl: &'e VarDecl<'e>) -> Result<'e, ()> {
+        let VarDecl { name, value } = var_decl;
+        let value = match value {
+            Some(v) => self.eval_expr(v)?,
+            None => Value::Primary(Primary::Nil),
+        };
+
+        self.current_stack_frame().insert(name, value);
+
+        Ok(())
+    }
+
+    fn eval_decl(&mut self, decl: &'e Decl<'e>) -> Result<'e, ()> {
+        self.set_line(decl);
+        match decl.kind() {
+            DeclKind::Expr(e) => {
+                self.eval_expr(e)?;
             }
-            AstKind::For {
+            DeclKind::Stmt(s) => {
+                self.eval_stmt(s)?;
+            }
+            DeclKind::Var(v) => self.eval_var_decl(v)?,
+            DeclKind::Fun { name, params, body } => {
+                self.current_stack_frame().insert(
+                    name,
+                    Value::Function {
+                        name,
+                        params,
+                        body: body.kind().decls(),
+                    },
+                );
+            }
+        };
+
+        Ok(())
+    }
+
+    fn eval_block(
+        &mut self,
+        decls: impl IntoIterator<Item = &'e Decl<'e>>,
+        vars: Option<HashMap<&'e str, Value<'e>>>,
+    ) -> Result<'e, ()> {
+        self.incr_stack_frame(vars)?;
+        for decl in decls {
+            self.eval_decl(decl)?;
+        }
+        self.decr_stack_frame();
+
+        Ok(())
+    }
+
+    fn eval_stmt(&mut self, stmt: &'e Stmt<'e>) -> Result<'e, ()> {
+        self.set_line(stmt);
+        match stmt.kind() {
+            StmtKind::Expr(e) => {
+                self.eval_expr(e)?;
+            }
+            StmtKind::For {
                 begin,
                 condition,
                 after_iter,
                 body,
             } => {
                 if let Some(begin) = begin {
-                    self.eval_node(begin)?;
+                    match begin {
+                        ForBegin::Expr(e) => {
+                            self.eval_expr(e)?;
+                        }
+                        ForBegin::VarDecl(v) => self.eval_var_decl(v)?,
+                    }
                 }
 
                 while match condition {
-                    Some(c) => self.truthiness(c)?,
+                    Some(c) => self.eval_expr(c)?.truthiness(),
                     None => true,
                 } {
-                    self.eval_node(body)?;
+                    self.eval_stmt(body)?;
                     if let Some(after_iter) = after_iter {
-                        self.eval_node(after_iter)?;
+                        self.eval_expr(after_iter)?;
                     }
                 }
-
-                Primary::Bool(true).into()
             }
-            AstKind::While { condition, body } => {
-                while self.truthiness(condition)? {
-                    self.eval_node(body)?;
+            StmtKind::If {
+                condition,
+                body,
+                el,
+            } => {
+                if self.eval_expr(condition)?.truthiness() {
+                    self.eval_stmt(body)?;
+                } else if let Some(el) = el {
+                    self.eval_stmt(el)?;
                 }
-
-                Primary::Bool(true).into()
             }
-            AstKind::Block(i) => {
-                self.incr_stack_frame(node)?;
-                for i in i {
-                    self.eval_node(i)?;
+            StmtKind::While { condition, body } => {
+                while self.eval_expr(condition)?.truthiness() {
+                    self.eval_stmt(body)?;
                 }
-                self.decr_stack_frame();
-
-                Primary::Bool(true).into()
             }
-            AstKind::VarDecl(ident, i) => {
-                let val = match i {
-                    Some(i) => self.eval_node(i)?,
-                    None => Value::Primary(Primary::Nil),
+            StmtKind::Print(expr) => {
+                let val = self.eval_expr(expr)?;
+                let print = Self::print_value(val);
+                writeln!(self.stdout, "{print}").map_err(|io| self.err_inner(ErrorKind::Io(io)))?;
+            }
+            StmtKind::Return(ret) => {
+                let ret = if let Some(ret) = ret {
+                    self.eval_expr(ret)?
+                } else {
+                    Primary::Nil.into()
+                };
+                return self.err(ErrorKind::Return(ret));
+            }
+            StmtKind::Block(b) => self.eval_block(b.kind().decls(), None)?,
+        };
+
+        Ok(())
+    }
+
+    fn eval_expr(&mut self, expr: &'e Expr<'e>) -> Result<'e, Value<'e>> {
+        self.set_line(expr);
+
+        let v = match expr.kind() {
+            ExprKind::Assign(ident, val) => {
+                let val = self.eval_expr(val)?;
+                *self.resolve_var_mut(ident)? = val.clone();
+
+                val
+            }
+            ExprKind::Or(a, b) => {
+                let a = self.eval_expr(a)?;
+
+                if a.truthiness() {
+                    a
+                } else {
+                    self.eval_expr(b)?
+                }
+            }
+            ExprKind::And(a, b) => {
+                let a = self.eval_expr(a)?;
+
+                if a.truthiness() {
+                    self.eval_expr(b)?
+                } else {
+                    Primary::Bool(false).into()
+                }
+            }
+            ExprKind::Eq(a, op, b) => {
+                let a = self.eval_expr(a)?;
+                let b = self.eval_expr(b)?;
+                let res = match (a, b) {
+                    (Value::Primary(a), Value::Primary(b)) => match op {
+                        EqOp::Eq => a == b,
+                        EqOp::Neq => a != b,
+                    },
+                    _ => false,
                 };
 
-                self.current_stack_frame().insert(ident, val);
-
-                Primary::Bool(true).into()
+                Primary::Bool(res).into()
             }
-            AstKind::VarAssign(ident, i) => {
-                let new_val = self.eval_node(i)?;
-                *self.resolve_var_mut(node, ident)? = new_val.clone();
+            ExprKind::Cmp(a, op, b) => {
+                let a = self.eval_expr(a)?.as_num(self)?;
+                let b = self.eval_expr(b)?.as_num(self)?;
+                let res = match op {
+                    CmpOp::Gte => a >= b,
+                    CmpOp::Gt => a > b,
+                    CmpOp::Lte => a <= b,
+                    CmpOp::Lt => a < b,
+                };
 
-                new_val
+                Primary::Bool(res).into()
             }
-            AstKind::Print(i) => {
-                let node_val = self.eval_node(i)?;
-                let out = Self::print_value(node_val);
+            ExprKind::Term(a, op, b) => {
+                let a = self.eval_expr(a)?;
+                let b = self.eval_expr(b)?;
+                let res = match op {
+                    TermOp::Add => {
+                        if let (Some(a), Some(b)) = (a.as_str(), b.as_str()) {
+                            Primary::String(Cow::Owned(a.clone().into_owned() + b))
+                        } else if let (Ok(a), Ok(b)) = (a.as_num(self), b.as_num(self)) {
+                            Primary::Number((a + b).into())
+                        } else {
+                            return self.err(ErrorKind::BothMustBeNumbersOrStrings);
+                        }
+                    }
+                    TermOp::Sub => {
+                        if let (Ok(a), Ok(b)) = (a.as_num(self), b.as_num(self)) {
+                            Primary::Number((a - b).into())
+                        } else {
+                            return self.err(ErrorKind::BothMustBeNumbers);
+                        }
+                    }
+                };
 
-                eprintln!("printing {out}");
-                writeln!(self.stdout, "{}", out).map_err(|io| Error {
-                    line: i.line(),
-                    kind: ErrorKind::Io(io),
-                })?;
-
-                Primary::Bool(true).into()
+                res.into()
             }
-            AstKind::Or(a, b) => {
-                if self.truthiness(a)? {
-                    self.eval_node(a)?
-                } else {
-                    self.eval_node(b)?
+            ExprKind::Factor(a, op, b) => {
+                let a = self.eval_expr(a)?.as_num(self)?;
+                let b = self.eval_expr(b)?.as_num(self)?;
+                let res = match op {
+                    FactorOp::Div => a / b,
+                    FactorOp::Mul => a * b,
+                };
+
+                Primary::Number(res.into()).into()
+            }
+            ExprKind::Unary(op, expr) => match op {
+                UnaryOp::Not => Primary::Bool(!self.eval_expr(expr)?.truthiness()).into(),
+                UnaryOp::Neg => {
+                    Primary::Number((-self.eval_expr(expr)?.as_num(self)?).into()).into()
                 }
-            }
-            AstKind::And(a, b) => {
-                if self.truthiness(a)? {
-                    self.eval_node(b)?
-                } else {
-                    self.eval_node(a)?
-                }
-            }
-            AstKind::Equality(..) => Primary::Bool(self.truthiness(node)?).into(),
-            AstKind::Cmp(..) => Primary::Bool(self.truthiness(node)?).into(),
-            AstKind::Term(..) => self
-                .as_num(node)
-                .map(|n| Primary::Number(n.into()).into())
-                .or_else(|_| {
-                    self.as_string(node)
-                        .map(Primary::String)
-                        .map(Into::into)
-                        .ok_or_else(|| self.err_inner(node, ErrorKind::BothMustBeNumbersOrStrings))
-                })?,
-            AstKind::Factor(..) => Primary::Number(self.as_num(node)?.into()).into(),
-            AstKind::Unary(op, i) => match op {
-                UnaryOp::Not => Primary::Bool(!self.truthiness(i)?).into(),
-                UnaryOp::Neg => Primary::Number((-self.as_num(i)?).into()).into(),
             },
-            AstKind::FunDecl { name, params, body } => {
-                eprintln!("defining fn");
-                self.current_stack_frame()
-                    .insert(name, Value::Function { name, params, body });
-                eprintln!("defined fn");
-
-                Primary::Bool(true).into()
-            }
-            AstKind::Call { callee, args } => {
-                eprintln!("CALLING HERERE");
-                let val = self.eval_node(callee)?;
-                eprintln!("calling val {val}");
-                val.call(node, args, self)?
-            }
-            AstKind::Group(i) => self.eval_node(i)?,
-            AstKind::VariableAccess(ident) => self.resolve_var(node, ident)?.clone(),
-            AstKind::Primary(p) => p.clone().into(),
+            ExprKind::Call { callee, args } => self.eval_expr(callee)?.call(args, self)?,
+            ExprKind::Ident(ident) => self.resolve_var(ident)?.clone(),
+            ExprKind::Group(i) => self.eval_expr(i)?,
+            ExprKind::Primary(p) => p.clone().into(),
         };
 
-        eprintln!("returning value {value}");
-
-        Ok(value)
-    }
-
-    fn as_num(&mut self, node: &'e AstNode<'e>) -> Result<'e, f64> {
-        eprintln!("as num {node}");
-        match node.kind() {
-            AstKind::Term(a, op, b) => match op {
-                TermOp::Add => Ok(self.as_num(a)? + self.as_num(b)?),
-                TermOp::Sub => Ok(self.as_num(a)? - self.as_num(b)?),
-            },
-            AstKind::Factor(a, op, b) => {
-                if let (Ok(a), Ok(b)) = (self.as_num(a), self.as_num(b)) {
-                    Ok(match op {
-                        FactorOp::Mul => a * b,
-                        FactorOp::Div => a / b,
-                    })
-                } else {
-                    self.err(node, ErrorKind::BothMustBeNumbers)
-                }
-            }
-            AstKind::Unary(op, i) => match op {
-                UnaryOp::Not => self.err(node, ErrorKind::MustBeNumber),
-                UnaryOp::Neg => Ok(-self.as_num(i)?),
-            },
-            AstKind::Group(i) => self.as_num(i),
-            AstKind::VariableAccess(ident) => {
-                if let Value::Primary(Primary::Number(n)) = self.resolve_var(node, ident)? {
-                    Ok((*n).into())
-                } else {
-                    self.err(node, ErrorKind::MustBeNumber)
-                }
-            }
-            AstKind::Primary(Primary::Number(n)) => Ok(n.into()),
-            AstKind::Call { callee, args } => {
-                match self.eval_node(callee)?.call(node, args, self)? {
-                    Value::Primary(Primary::Number(n)) => Ok(n.into()),
-                    _ => self.err(node, ErrorKind::MustBeNumber),
-                }
-            }
-            _ => self.err(node, ErrorKind::MustBeNumber),
-        }
-    }
-
-    fn as_string(&self, node: &'e AstNode<'e>) -> Option<Cow<'e, str>> {
-        eprintln!("as str {node}");
-        match node.kind() {
-            AstKind::Term(a, op, b) => {
-                if let (Some(a), Some(b), TermOp::Add) = (self.as_string(a), self.as_string(b), op)
-                {
-                    eprintln!("both valid strings");
-                    return Some(Cow::Owned(a.into_owned() + &b));
-                }
-            }
-            AstKind::Group(i) => return self.as_string(i),
-            AstKind::VariableAccess(ident) => {
-                if let Value::Primary(Primary::String(s)) = self.resolve_var(node, ident).ok()? {
-                    return Some(s.clone());
-                }
-            }
-            AstKind::Primary(Primary::String(s)) => return Some(Cow::Borrowed(s)),
-            _ => {}
-        };
-
-        None
-    }
-
-    fn truthiness(&mut self, node: &'e AstNode<'e>) -> Result<'e, bool> {
-        eprintln!("truthiness {node}");
-        let res = match node.kind() {
-            AstKind::If { .. } => true,
-            AstKind::While { .. } => true,
-            AstKind::For { .. } => true,
-            AstKind::Block(..) => true,
-            AstKind::VarDecl(..) => true,
-            AstKind::VarAssign(_, i) => {
-                self.eval_node(node)?;
-                self.truthiness(i)?
-            }
-            AstKind::FunDecl { .. } => true,
-            AstKind::Call { callee, args } => {
-                self.eval_node(callee)?.call(node, args, self)?.truthiness()
-            }
-            AstKind::Print(..) => true,
-            AstKind::Or(a, b) => self.truthiness(a)? || self.truthiness(b)?,
-            AstKind::And(a, b) => self.truthiness(a)? && self.truthiness(b)?,
-            AstKind::Equality(a, op, b) => {
-                if let Ok(a) = self.as_num(a) {
-                    let Ok(b) = self.as_num(b) else {
-                        return Ok(false);
-                    };
-
-                    match op {
-                        EqOp::Eq => a == b,
-                        EqOp::Neq => a != b,
-                    }
-                } else if let Some(a) = self.as_string(a) {
-                    let Some(b) = self.as_string(b) else {
-                        return Ok(false);
-                    };
-
-                    match op {
-                        EqOp::Eq => a == b,
-                        EqOp::Neq => a != b,
-                    }
-                } else {
-                    match op {
-                        EqOp::Eq => self.truthiness(a)? == self.truthiness(b)?,
-                        EqOp::Neq => self.truthiness(a)? != self.truthiness(b)?,
-                    }
-                }
-            }
-            AstKind::Cmp(a, op, b) => match op {
-                CmpOp::Gt => self.as_num(a)? > self.as_num(b)?,
-                CmpOp::Gte => self.as_num(a)? >= self.as_num(b)?,
-                CmpOp::Lt => self.as_num(a)? < self.as_num(b)?,
-                CmpOp::Lte => self.as_num(a)? <= self.as_num(b)?,
-            },
-            AstKind::Term(..) => true,
-            AstKind::Factor(..) => true,
-            AstKind::Unary(op, i) => match op {
-                UnaryOp::Not => !self.truthiness(i)?,
-                UnaryOp::Neg => self.truthiness(i)?,
-            },
-            AstKind::VariableAccess(ident) => self.resolve_var(node, ident)?.truthiness(),
-            AstKind::Group(i) => self.truthiness(i)?,
-            AstKind::Primary(p) => Value::truthiness(&p.clone().into()),
-        };
-
-        Ok(res)
+        Ok(v)
     }
 }

@@ -24,12 +24,12 @@ fn main() {
 
     lexer.lex(&file_contents);
 
+    for err in lexer.errors() {
+        eprintln!("{err}")
+    }
+
     match command.as_str() {
         "tokenize" => {
-            for err in lexer.errors() {
-                eprintln!("{err}")
-            }
-
             for token in lexer.tokens() {
                 println!("{token}");
             }
@@ -75,6 +75,7 @@ fn main() {
             if !lexer.errors().is_empty() {
                 std::process::exit(65)
             }
+            eprintln!("got ehre");
             let mut parser = Parser::new(lexer.tokens());
             let program = match parser.parse() {
                 Ok(program) => program,

@@ -116,7 +116,7 @@ fn var() {
 
     assert_eq!(
         format!("{}", blocks.next().unwrap()),
-        r#"(print (varAccess x))"#
+        r#"(print (ident x))"#
     )
 }
 
@@ -154,7 +154,7 @@ fn var_assign() {
     assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl b 3.0)");
     assert_eq!(
         format!("{}", blocks.next().unwrap()),
-        "(varDecl c (varAssign a (varAssign b 2.0)))"
+        "(varDecl c (assign a (assign b 2.0)))"
     );
 }
 
@@ -219,7 +219,7 @@ fn for_loop() {
 
     assert_eq!(
         format!("{}", program.decls().iter().next().unwrap()),
-        "(for ((varDecl foo 0.0);(< (varAccess foo) 3.0);;) (print (varAssign foo (+ (varAccess foo) 1.0))))"
+        "(for ((varDecl foo 0.0);(< (ident foo) 3.0);;) (print (assign foo (+ (ident foo) 1.0))))"
     );
 }
 
@@ -300,3 +300,30 @@ fn for_expr_error_2() {
         "[line 1] Error at ')': Expect ';' after expression."
     );
 }
+
+#[test]
+fn early_return() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        fun f() {
+          return;
+          print "bad";
+        }
+
+        print f();
+    "#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut decls = program.decls().iter();
+
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(funDecl f (block (return) (print bad)))"
+    );
+}
+

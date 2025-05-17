@@ -256,15 +256,15 @@ fn basic_vars() {
     assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl test abc)");
     assert_eq!(
         format!("{}", blocks.next().unwrap()),
-        "(print (varAccess test))"
+        "(print (ident test))"
     );
     assert_eq!(
         format!("{}", blocks.next().unwrap()),
-        "(print (+ (varAccess test) (varAccess test)))"
+        "(print (+ (ident test) (ident test)))"
     );
     assert_eq!(
         format!("{}", blocks.next().unwrap()),
-        "(print (+ (+ (varAccess test) ___) (varAccess test)))"
+        "(print (+ (+ (ident test) ___) (ident test)))"
     );
 
     let mut stdout: Vec<u8> = Vec::new();
@@ -324,26 +324,17 @@ fn basic_var_reassignment() {
     let mut blocks = program.decls().iter();
 
     assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl baz 82.0)");
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (ident baz))");
     assert_eq!(
         format!("{}", blocks.next().unwrap()),
-        "(print (varAccess baz))"
+        "(assign baz (* (ident baz) 2.0))"
     );
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (ident baz))");
     assert_eq!(
         format!("{}", blocks.next().unwrap()),
-        "(varAssign baz (* (varAccess baz) 2.0))"
+        "(assign baz (* (ident baz) 2.0))"
     );
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(print (varAccess baz))"
-    );
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(varAssign baz (* (varAccess baz) 2.0))"
-    );
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(print (varAccess baz))"
-    );
+    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (ident baz))");
 
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
@@ -508,10 +499,7 @@ fn basic_fn() {
         format!("{}", decls.next().unwrap()),
         "(funDecl baz (block (print 97.0)))"
     );
-    assert_eq!(
-        format!("{}", decls.next().unwrap()),
-        "(call (varAccess baz))"
-    );
+    assert_eq!(format!("{}", decls.next().unwrap()), "(call (ident baz))");
 
     let mut stdout: Vec<u8> = Vec::new();
     eprintln!("HERERER");
@@ -542,11 +530,11 @@ fn basic_fn_with_args() {
 
     assert_eq!(
         format!("{}", decls.next().unwrap()),
-        "(funDecl f1 a (block (print (varAccess a))))"
+        "(funDecl f1 a (block (print (ident a))))"
     );
     assert_eq!(
         format!("{}", decls.next().unwrap()),
-        "(call (varAccess f1) 49.0)"
+        "(call (ident f1) 49.0)"
     );
 
     let mut stdout: Vec<u8> = Vec::new();
@@ -556,5 +544,77 @@ fn basic_fn_with_args() {
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
     assert_eq!(format!("{}", lines.next().unwrap()), "49");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn basic_fn_with_early_return() {
+    let mut lexer = Lexer::new();
+    let src = "
+        fun return_gte(a, b) { 
+            if (a >= b) {
+                return a;
+            } else {
+                return b;
+            }
+        }
+
+        print return_gte(10, 20);
+        print return_gte(133, 20);
+        print return_gte(-12, 20);
+        print return_gte(10*34, 20);
+    ";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    eprintln!("{:?}", executor.run());
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+    assert_eq!(format!("{}", lines.next().unwrap()), "20");
+    assert_eq!(format!("{}", lines.next().unwrap()), "133");
+    assert_eq!(format!("{}", lines.next().unwrap()), "20");
+    assert_eq!(format!("{}", lines.next().unwrap()), "340");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn fib() {
+    let mut lexer = Lexer::new();
+    let src = "
+        fun fib(n) {
+          if (n < 2) return n;
+          return fib(n - 2) + fib(n - 1);
+        }
+
+        var start = clock();
+        print fib(4);
+        print fib(4) == 3;
+        print fib(10);
+        print fib(20);
+        print (clock() - start);
+    ";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    eprintln!("{:?}", executor.run());
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+    assert_eq!(format!("{}", lines.next().unwrap()), "3");
+    assert_eq!(format!("{}", lines.next().unwrap()), "true");
+    assert_eq!(format!("{}", lines.next().unwrap()), "55");
+    assert_eq!(format!("{}", lines.next().unwrap()), "6765");
+    assert!(format!("{}", lines.next().unwrap()).parse::<f64>().is_ok());
     assert!(lines.next().is_none());
 }
