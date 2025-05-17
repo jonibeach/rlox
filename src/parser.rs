@@ -364,28 +364,22 @@ impl<'src> Parser<'src> {
     }
 
     fn get_symbol(&self, idx: usize) -> AcceptSymbol<'src> {
-        eprintln!("getting symvol");
         self.tokens.get(idx).copied()
     }
 
     fn peek_symbol(&self) -> AcceptSymbol<'src> {
-        eprintln!("peeking symbol");
         self.get_symbol(self.idx.get())
     }
 
     fn get_token(&self, idx: usize) -> AcceptToken<'src> {
-        eprintln!("gettting token");
         self.get_symbol(idx).map(|s| s.token())
     }
 
     fn peek(&self) -> AcceptToken<'src> {
-        // std::thread::sleep(std::time::Duration::from_millis(100));
-        eprintln!("peek");
         self.get_token(self.idx.get())
     }
 
     fn next(&self) -> AcceptToken<'src> {
-        eprintln!("next");
         let token = self.peek();
 
         if token.is_some() {
@@ -398,12 +392,10 @@ impl<'src> Parser<'src> {
     fn prev(&self) -> AcceptToken<'src> {
         self.idx.set(self.idx.get() - 1);
 
-        eprintln!("prev");
         self.peek()
     }
 
     fn accept(&self, token: Token<'src>) -> AcceptToken<'src> {
-        eprintln!("accept");
         if let Some(next) = self.peek() {
             if next == token {
                 return Some(self.next().unwrap());
@@ -431,7 +423,6 @@ impl<'src> Parser<'src> {
     }
 
     fn expect_after(&self, token: Token<'src>, after: &'static str) -> Result<'src, Token<'src>> {
-        eprintln!("expect after");
         self.accept(token)
             .ok_or(self.err_inner(ErrorKind::TokenAfter(token, after)))
     }
@@ -455,7 +446,6 @@ impl<'src> Parser<'src> {
     }
 
     fn err_inner(&self, kind: ErrorKind<'src>) -> Error<'src> {
-        eprintln!("err inner");
         Error {
             line: self.line(),
             token: self.peek(),
@@ -679,6 +669,7 @@ impl<'src> Parser<'src> {
         let mut params = Vec::new();
 
         if let Some(Token::Identifier(p)) = self.peek() {
+            self.next().unwrap();
             params.push(p);
         }
 
@@ -708,6 +699,8 @@ impl<'src> Parser<'src> {
         };
 
         self.expect_after(Token::LeftParen, "function name")?;
+
+        eprintln!("parsing fn {name}");
 
         let params = self.parse_parameters()?;
 

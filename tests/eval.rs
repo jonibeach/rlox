@@ -524,3 +524,37 @@ fn basic_fn() {
     assert_eq!(format!("{}", lines.next().unwrap()), "97");
     assert!(lines.next().is_none());
 }
+
+#[test]
+fn basic_fn_with_args() {
+    let mut lexer = Lexer::new();
+    let src = "
+        fun f1(a) { print a; }
+        f1(49);
+    ";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut decls = program.decls().iter();
+
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(funDecl f1 a (block (print (varAccess a))))"
+    );
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(call (varAccess f1) 49.0)"
+    );
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    eprintln!("{:?}", executor.run());
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+    assert_eq!(format!("{}", lines.next().unwrap()), "49");
+    assert!(lines.next().is_none());
+}
