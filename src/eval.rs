@@ -53,7 +53,7 @@ impl Display for Error<'_> {
             ErrorKind::NotEnoughParams => "Not enough params".into(),
             ErrorKind::StackOverflow => "Stack overflow.".into(),
             ErrorKind::Io(..) => "IO error".into(),
-            ErrorKind::Return(..) => unreachable!(),
+            ErrorKind::Return(ref r) => format!("Return {r}"),
         };
 
         writeln!(f, "{msg}")?;
@@ -73,18 +73,24 @@ pub enum Value<'e> {
         name: &'e str,
         params: &'e [&'e str],
         body: &'e [Decl<'e>],
+        closure: Option<HashMap<&'e str, Value<'e>>>,
     },
 }
 
 impl<'e> Value<'e> {
-    fn call<T: Write>(
-        &self,
+    fn call<'a, T: Write>(
+        &'a mut self,
         args: &'e [Expr<'e>],
         executor: &mut Executor<'e, T>,
     ) -> Result<'e, Self> {
         match self {
             Self::NativeFunction(f) => Ok(f()),
-            Self::Function { name, params, body } => {
+            Self::Function {
+                name,
+                params,
+                body,
+                closure,
+            } => {
                 let mut args = args.iter();
 
                 let mut initial_vars = HashMap::new();
@@ -99,24 +105,44 @@ impl<'e> Value<'e> {
                     initial_vars.insert(*p, val);
                 }
 
-                eprintln!("evaling fn {name} with initial vars {initial_vars:?}");
-                let ret = match executor.eval_block(*body, Some(initial_vars)) {
+                executor.closure = closure.as_mut().map(|c| c as *mut _);
+
+                eprintln!("evaling fn body {name}");
+                let ret = match executor.eval_block_inner(*body, Some(initial_vars), false) {
                     Ok(..) => Primary::Nil.into(),
                     Err(Error {
                         kind: ErrorKind::Return(ret),
                         ..
-                    }) => {
-                        eprintln!(
-                            "returned {ret} from fn call {name} with params {:?}",
-                            params
-                                .iter()
-                                .filter_map(|p| executor.resolve_var(p).ok())
-                                .map(|v| format!("{v}"))
-                                .collect::<Vec<_>>()
-                        );
-                        executor.decr_stack_frame();
-                        ret
-                    }
+                    }) => match ret {
+                        Value::Function {
+                            name,
+                            params,
+                            body,
+                            closure,
+                        } => {
+                            let with_closure = Value::Function {
+                                name,
+                                params,
+                                body,
+                                closure: Some({
+                                    let mut base = closure.unwrap_or(HashMap::new());
+                                    base.extend(executor.decr_stack_frame());
+
+                                    base
+                                }),
+                            };
+
+                            eprintln!("RETURN CLOSURE {with_closure}");
+
+                            with_closure
+                        }
+                        _ => {
+                            executor.decr_stack_frame();
+
+                            eprintln!("RETURNING VAL {ret}");
+                            ret
+                        }
+                    },
                     Err(e) => return Err(e),
                 };
 
@@ -166,6 +192,7 @@ pub struct Executor<'e, T> {
     stack: [Option<HashMap<&'e str, Value<'e>>>; STACK_SIZE],
     stack_ptr: Cell<usize>,
     line: Cell<usize>,
+    closure: Option<*mut HashMap<&'e str, Value<'e>>>,
     stdout: T,
 }
 
@@ -197,10 +224,11 @@ impl<'e, T: Write> Executor<'e, T> {
 
         Self {
             program,
-            stdout,
             stack,
-            line: 0.into(),
             stack_ptr: 0.into(),
+            line: 0.into(),
+            closure: None,
+            stdout,
         }
     }
 
@@ -211,17 +239,21 @@ impl<'e, T: Write> Executor<'e, T> {
         Err(self.err_inner(kind))
     }
 
-    fn decr_stack_frame(&mut self) {
-        *self.current_stack_frame_inner() = None;
+    /// returns the previous stack frame
+    fn decr_stack_frame(&mut self) -> HashMap<&'e str, Value<'e>> {
         eprintln!("decring stack frame {}", self.stack_ptr.get());
+        let prev = self.current_stack_frame_inner().take().unwrap();
         self.stack_ptr.set(self.stack_ptr.get() - 1);
+
+        prev
     }
 
     fn incr_stack_frame(&mut self, vars: Option<HashMap<&'e str, Value<'e>>>) -> Result<'e, ()> {
         let curr = self.stack_ptr.get();
-        if curr < STACK_SIZE {
+        if curr < STACK_SIZE - 1 {
             eprintln!("incring stack frame {}", self.stack_ptr.get());
             self.stack_ptr.set(curr + 1);
+            *self.current_stack_frame_inner() = Some(HashMap::new());
 
             if let Some(vars) = vars {
                 *self.current_stack_frame_inner() = Some(vars)
@@ -239,18 +271,7 @@ impl<'e, T: Write> Executor<'e, T> {
     }
 
     fn current_stack_frame(&mut self) -> &mut HashMap<&'e str, Value<'e>> {
-        let stack_frame = self.current_stack_frame_inner();
-        if let Some(frame) = stack_frame {
-            return frame;
-        }
-
-        *stack_frame = Some(HashMap::new());
-
-        let Some(frame) = stack_frame else {
-            unreachable!()
-        };
-
-        frame
+        self.current_stack_frame_inner().as_mut().unwrap()
     }
     fn find_var_frame(&self, ident: &str) -> Option<usize> {
         (0..=self.stack_ptr.get()).rev().find(|&i| {
@@ -265,6 +286,12 @@ impl<'e, T: Write> Executor<'e, T> {
         if let Some(i) = self.find_var_frame(ident) {
             let v = self.stack[i].as_ref().unwrap().get(ident).unwrap();
             return Ok(v);
+        } else if let Some(c) = self.closure {
+            // SAFETY: the closure is `Some` only inside the `call` method of `Value`
+            // We have a mutable refernce to the closure there, so this is safe.
+            if let Some(v) = unsafe { &*c }.get(ident) {
+                return Ok(v);
+            }
         }
         self.err(ErrorKind::UndefinedVariable(ident))
     }
@@ -273,7 +300,14 @@ impl<'e, T: Write> Executor<'e, T> {
         if let Some(i) = self.find_var_frame(ident) {
             let v = self.stack[i].as_mut().unwrap().get_mut(ident).unwrap();
             return Ok(v);
+        } else if let Some(c) = self.closure {
+            // Safety: the closure is `Some` only inside the `call` method of `Value`
+            // We have a mutable refernce to the closure there, so this is safe.
+            if let Some(v) = unsafe { &mut *c }.get_mut(ident) {
+                return Ok(v);
+            }
         }
+
         self.err(ErrorKind::UndefinedVariable(ident))
     }
 
@@ -340,10 +374,39 @@ impl<'e, T: Write> Executor<'e, T> {
                         name,
                         params,
                         body: body.kind().decls(),
+                        closure: None,
                     },
                 );
             }
         };
+
+        Ok(())
+    }
+
+    fn eval_block_inner(
+        &mut self,
+        decls: impl IntoIterator<Item = &'e Decl<'e>>,
+        vars: Option<HashMap<&'e str, Value<'e>>>,
+        declr_stack_frame_on_ret: bool,
+    ) -> Result<'e, ()> {
+        self.incr_stack_frame(vars)?;
+        for decl in decls {
+            let res = self.eval_decl(decl);
+
+            if let Err(Error {
+                kind: ErrorKind::Return(..),
+                ..
+            }) = res
+            {
+                if declr_stack_frame_on_ret {
+                    self.decr_stack_frame();
+                }
+            }
+
+            res?;
+        }
+
+        self.decr_stack_frame();
 
         Ok(())
     }
@@ -353,13 +416,7 @@ impl<'e, T: Write> Executor<'e, T> {
         decls: impl IntoIterator<Item = &'e Decl<'e>>,
         vars: Option<HashMap<&'e str, Value<'e>>>,
     ) -> Result<'e, ()> {
-        self.incr_stack_frame(vars)?;
-        for decl in decls {
-            self.eval_decl(decl)?;
-        }
-        self.decr_stack_frame();
-
-        Ok(())
+        self.eval_block_inner(decls, vars, true)
     }
 
     fn eval_stmt(&mut self, stmt: &'e Stmt<'e>) -> Result<'e, ()> {
@@ -422,7 +479,10 @@ impl<'e, T: Write> Executor<'e, T> {
                 };
                 return self.err(ErrorKind::Return(ret));
             }
-            StmtKind::Block(b) => self.eval_block(b.kind().decls(), None)?,
+            StmtKind::Block(b) => {
+                eprintln!("evaling normal block");
+                self.eval_block(b.kind().decls(), None)?
+            }
         };
 
         Ok(())
@@ -521,7 +581,10 @@ impl<'e, T: Write> Executor<'e, T> {
                     Primary::Number((-self.eval_expr(expr)?.as_num(self)?).into()).into()
                 }
             },
-            ExprKind::Call { callee, args } => self.eval_expr(callee)?.call(args, self)?,
+            ExprKind::Call { callee, args } => {
+                let mut callee = self.eval_expr(callee)?;
+                callee.call(args, self)?
+            }
             ExprKind::Ident(ident) => self.resolve_var(ident)?.clone(),
             ExprKind::Group(i) => self.eval_expr(i)?,
             ExprKind::Primary(p) => p.clone().into(),

@@ -618,3 +618,60 @@ fn fib() {
     assert!(format!("{}", lines.next().unwrap()).parse::<f64>().is_ok());
     assert!(lines.next().is_none());
 }
+
+#[test]
+fn higher_ord_fun() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        fun makeFilter(min) {
+          fun filter(n) {
+            if (n < min) {
+              return false;
+            }
+            return true;
+          }
+          return filter;
+        }
+
+        // This function applies a function to a list of
+        // numbers
+        fun applyToNumbers(f, count) {
+          var n = 0;
+          while (n < count) {
+            if (f(n)) {
+              print n;
+            }
+            n = n + 1;
+          }
+        }
+
+        var greaterThanX = makeFilter(2);
+        var greaterThanY = makeFilter(4);
+
+        print "Numbers >= 2:";
+        applyToNumbers(greaterThanX, 5);
+
+        print "Numbers >= 4:";
+        applyToNumbers(greaterThanY, 5);
+    "#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    eprintln!("{:?}", executor.run());
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+    assert_eq!(format!("{}", lines.next().unwrap()), "Numbers >= 2:");
+    for i in 2..5 {
+        assert_eq!(format!("{}", lines.next().unwrap()), i.to_string());
+    }
+    assert_eq!(format!("{}", lines.next().unwrap()), "Numbers >= 4:");
+    assert_eq!(format!("{}", lines.next().unwrap()), "4");
+    assert!(lines.next().is_none());
+}
