@@ -13,7 +13,7 @@ pub enum ErrorKind<'e> {
     UndefinedVariable(&'e str),
     StackOverflow,
     NotCallable,
-    NotEnoughParams,
+    IncorrectArgCount { got: usize, expected: usize },
     Return(Value<'e>),
     Io(std::io::Error),
 }
@@ -49,8 +49,10 @@ impl Display for Error<'_> {
             ErrorKind::UndefinedVariable(ident) => {
                 format!("Undefined variable '{ident}'.")
             }
-            ErrorKind::NotCallable => "Not callable".into(),
-            ErrorKind::NotEnoughParams => "Not enough params".into(),
+            ErrorKind::NotCallable => "Can only call functions and classes".into(),
+            ErrorKind::IncorrectArgCount { got, expected } => {
+                format!("Expected {expected} arguments but got {got}.")
+            }
             ErrorKind::StackOverflow => "Stack overflow.".into(),
             ErrorKind::Io(..) => "IO error".into(),
             ErrorKind::Return(ref r) => format!("Return {r}"),
@@ -91,15 +93,17 @@ impl<'e> Value<'e> {
                 body,
                 closure,
             } => {
+                let got = args.len();
+                let expected = params.len();
+                if got != expected {
+                    return executor.err(ErrorKind::IncorrectArgCount { got, expected });
+                }
+
                 let mut args = args.iter();
 
                 let mut initial_vars = HashMap::new();
                 for p in &params[..] {
-                    let arg = match args.next() {
-                        Some(a) => a,
-                        None => return Err(executor.err_inner(ErrorKind::NotEnoughParams)),
-                    };
-
+                    let arg = args.next().unwrap();
                     let val = executor.eval_expr(arg)?;
 
                     initial_vars.insert(*p, val);
