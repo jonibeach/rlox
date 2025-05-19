@@ -1,21 +1,16 @@
-use codecrafters_interpreter::lexer::{Error, Keyword, Lexer, Symbol, Token};
+use codecrafters_interpreter::lexer::{Error, Keyword, Lexer, Token};
 
 #[test]
 fn whitespace() {
     let mut lexer = Lexer::new();
     let src = "{\r\r\r\r}\n {}";
     lexer.lex(src);
+    let mut tokens = lexer.tokens().iter();
 
-    assert_eq!(
-        lexer.tokens(),
-        [
-            Symbol::new(0, Token::LeftBrace),
-            Symbol::new(0, Token::RightBrace),
-            Symbol::new(1, Token::LeftBrace),
-            Symbol::new(1, Token::RightBrace)
-        ]
-        .as_slice()
-    );
+    assert_eq!(tokens.next().unwrap().token(), Token::LeftBrace);
+    assert_eq!(tokens.next().unwrap().token(), Token::RightBrace);
+    assert_eq!(tokens.next().unwrap().token(), Token::LeftBrace);
+    assert_eq!(tokens.next().unwrap().token(), Token::RightBrace);
 
     assert_eq!(lexer.errors(), [].as_slice())
 }
@@ -27,8 +22,8 @@ fn string() {
     lexer.lex(src);
 
     assert_eq!(
-        lexer.tokens(),
-        [Symbol::new(0, Token::String("helloz")),].as_slice()
+        lexer.tokens().first().unwrap().token(),
+        Token::String("helloz")
     );
 
     assert_eq!(lexer.errors(), [].as_slice())
@@ -41,17 +36,18 @@ fn string_fails() {
     lexer.lex(src);
 
     assert_eq!(
-        lexer.tokens(),
-        [
-            Symbol::new(0, Token::String("hel")),
-            Symbol::new(0, Token::Identifier("lo"))
-        ]
-        .as_slice()
+        lexer.tokens().first().unwrap().token(),
+        Token::String("hel")
     );
 
     assert_eq!(
-        lexer.errors(),
-        [Symbol::new(0, Error::UnterminatedString)].as_slice()
+        lexer.tokens().iter().nth(1).unwrap().token(),
+        Token::Identifier("lo")
+    );
+
+    assert_eq!(
+        lexer.errors().first().unwrap().token(),
+        Error::UnterminatedString,
     )
 }
 
@@ -64,8 +60,8 @@ fn unterminated_string() {
     assert_eq!(lexer.tokens(), [].as_slice());
 
     assert_eq!(
-        lexer.errors(),
-        [Symbol::new(0, Error::UnterminatedString)].as_slice()
+        lexer.errors().first().unwrap().token(),
+        Error::UnterminatedString
     )
 }
 
@@ -75,8 +71,8 @@ fn number() {
     let src = "123.14";
     lexer.lex(src);
     assert_eq!(
-        lexer.tokens(),
-        [Symbol::new(0, Token::Number(123.14.into(), "123.14"))].as_slice()
+        lexer.tokens().first().unwrap().token(),
+        Token::Number(123.14.into(), "123.14")
     );
     assert_eq!(lexer.errors(), [].as_slice())
 }
@@ -87,8 +83,8 @@ fn number_invalid_amount_of_decimal_points() {
     let src = "123.14.1231";
     lexer.lex(src);
     assert_eq!(
-        lexer.errors(),
-        [Symbol::new(0, Error::UnexpectedCharacter('.'))].as_slice()
+        lexer.errors().first().unwrap().token(),
+        Error::UnexpectedCharacter('.')
     )
 }
 
@@ -98,8 +94,8 @@ fn ident() {
     let src = "_testing_lox_z";
     lexer.lex(src);
     assert_eq!(
-        lexer.tokens(),
-        [Symbol::new(0, Token::Identifier("_testing_lox_z")),].as_slice()
+        lexer.without_symbols(),
+        [Token::Identifier("_testing_lox_z"),].as_slice()
     );
     assert_eq!(lexer.errors(), [].as_slice())
 }
@@ -110,13 +106,12 @@ fn ident_2() {
     let src = "test=123.123";
     lexer.lex(src);
     assert_eq!(
-        lexer.tokens(),
+        lexer.without_symbols(),
         [
-            Symbol::new(0, Token::Identifier("test")),
-            Symbol::new(0, Token::Equal),
-            Symbol::new(0, Token::Number(123.123.into(), "123.123"))
+            Token::Identifier("test"),
+            Token::Equal,
+            Token::Number(123.123.into(), "123.123")
         ]
-        .as_slice()
     );
     assert_eq!(lexer.errors(), [].as_slice())
 }
@@ -127,17 +122,16 @@ fn keyword() {
     let src = "fun test() = class Test";
     lexer.lex(src);
     assert_eq!(
-        lexer.tokens(),
-        [
-            Symbol::new(0, Token::Keyword(Keyword::Fun)),
-            Symbol::new(0, Token::Identifier("test")),
-            Symbol::new(0, Token::LeftParen),
-            Symbol::new(0, Token::RightParen),
-            Symbol::new(0, Token::Equal),
-            Symbol::new(0, Token::Keyword(Keyword::Class)),
-            Symbol::new(0, Token::Identifier("Test"))
+        lexer.without_symbols(),
+        vec![
+            Token::Keyword(Keyword::Fun),
+            Token::Identifier("test"),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Equal,
+            Token::Keyword(Keyword::Class),
+            Token::Identifier("Test")
         ]
-        .as_slice()
     );
     assert_eq!(lexer.errors(), [].as_slice())
 }
@@ -148,14 +142,13 @@ fn keyword_2() {
     let src = "classor class or class";
     lexer.lex(src);
     assert_eq!(
-        lexer.tokens(),
+        lexer.without_symbols(),
         [
-            Symbol::new(0, Token::Identifier("classor")),
-            Symbol::new(0, Token::Keyword(Keyword::Class)),
-            Symbol::new(0, Token::Keyword(Keyword::Or)),
-            Symbol::new(0, Token::Keyword(Keyword::Class)),
+            Token::Identifier("classor"),
+            Token::Keyword(Keyword::Class),
+            Token::Keyword(Keyword::Or),
+            Token::Keyword(Keyword::Class),
         ]
-        .as_slice()
     );
     assert_eq!(lexer.errors(), [].as_slice())
 }

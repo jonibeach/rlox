@@ -72,6 +72,7 @@ pub enum Value<'e> {
     Primary(Primary<'e>),
     NativeFunction(fn() -> Value<'e>),
     Function {
+        pos: usize,
         stack_ptr: usize,
         name: &'e str,
         params: &'e [&'e str],
@@ -88,6 +89,7 @@ impl<'e> Value<'e> {
         match self {
             Self::NativeFunction(f) => Ok(f()),
             Self::Function {
+                pos,
                 stack_ptr,
                 name,
                 params,
@@ -103,11 +105,12 @@ impl<'e> Value<'e> {
 
                 let mut initial_vars = HashMap::new();
                 for p in &params[..] {
-                    eprintln!("EVALING PARAM {p} {}", executor.stack_ptr.get());
+                    eprintln!("EVALING PARAM {name} {p} {}", executor.stack_ptr.get());
                     let arg = args.next().unwrap();
+                    eprintln!("ARG ON LINE {} SETTING TO {pos}", arg.line());
                     let val = executor.eval_expr(arg)?;
 
-                    initial_vars.insert(*p, val);
+                    initial_vars.insert(*p, (*pos, val));
                 }
 
                 // Set `effective_stack_ptr` to ensure that functions can only access variables in the scope they are defined in
@@ -185,9 +188,10 @@ impl Display for Value<'_> {
 
 pub struct Executor<'e, T> {
     program: &'e [Decl<'e>],
-    stack: [Option<HashMap<&'e str, Value<'e>>>; STACK_SIZE],
+    stack: [Option<HashMap<&'e str, (usize, Value<'e>)>>; STACK_SIZE],
     stack_ptr: Cell<usize>,
     line: Cell<usize>,
+    pos: Cell<usize>,
     excluded_stack_range: Option<(usize, usize)>,
     stdout: T,
 }
@@ -201,7 +205,7 @@ impl<'e> Executor<'e, std::io::Stdout> {
 macro_rules! make_var_resolver {
     ($s: expr, $getter: tt, $ref: tt, $ident: ident) => {
         if let Some(i) = $s.find_var_frame($ident) {
-            let v = $s.stack[i].$ref().unwrap().$getter($ident).unwrap();
+            let (_, v) = $s.stack[i].$ref().unwrap().$getter($ident).unwrap();
             Ok(v)
         } else {
             $s.err(ErrorKind::UndefinedVariable($ident))
@@ -225,7 +229,7 @@ impl<'e, T: Write> Executor<'e, T> {
             ))
         }
 
-        globals.insert("clock", Value::NativeFunction(clock));
+        globals.insert("clock", (0, Value::NativeFunction(clock)));
 
         stack[0] = Some(globals);
 
@@ -234,6 +238,7 @@ impl<'e, T: Write> Executor<'e, T> {
             stack,
             stack_ptr: 0.into(),
             line: 0.into(),
+            pos: 0.into(),
             excluded_stack_range: None,
             stdout,
         }
@@ -247,7 +252,7 @@ impl<'e, T: Write> Executor<'e, T> {
     }
 
     /// returns the previous stack frame
-    fn decr_stack_frame(&mut self) -> HashMap<&'e str, Value<'e>> {
+    fn decr_stack_frame(&mut self) -> HashMap<&'e str, (usize, Value<'e>)> {
         eprintln!("decring stack frame {}", self.stack_ptr.get());
         let prev = self.current_stack_frame_inner().take().unwrap();
         self.stack_ptr.set(self.stack_ptr.get() - 1);
@@ -255,17 +260,16 @@ impl<'e, T: Write> Executor<'e, T> {
         prev
     }
 
-    fn incr_stack_frame(&mut self, vars: Option<HashMap<&'e str, Value<'e>>>) -> Result<'e, ()> {
+    fn incr_stack_frame(
+        &mut self,
+        vars: Option<HashMap<&'e str, (usize, Value<'e>)>>,
+    ) -> Result<'e, ()> {
         let curr = self.stack_ptr.get();
         if curr < STACK_SIZE - 1 {
             eprintln!("incring stack frame {}", self.stack_ptr.get());
             self.stack_ptr.set(curr + 1);
 
-            *self.current_stack_frame_inner() = Some(if let Some(vars) = vars {
-                vars
-            } else {
-                HashMap::new()
-            });
+            *self.current_stack_frame_inner() = Some(vars.unwrap_or_default());
 
             Ok(())
         } else {
@@ -273,21 +277,38 @@ impl<'e, T: Write> Executor<'e, T> {
         }
     }
 
-    fn current_stack_frame_inner(&mut self) -> &mut Option<HashMap<&'e str, Value<'e>>> {
+    fn current_stack_frame_inner(&mut self) -> &mut Option<HashMap<&'e str, (usize, Value<'e>)>> {
         let stack_ptr = self.stack_ptr.get();
         &mut self.stack[stack_ptr]
     }
 
-    fn current_stack_frame(&mut self) -> &mut HashMap<&'e str, Value<'e>> {
+    fn current_stack_frame(&mut self) -> &mut HashMap<&'e str, (usize, Value<'e>)> {
         self.current_stack_frame_inner().as_mut().unwrap()
     }
     fn find_var_frame(&self, ident: &str) -> Option<usize> {
         let curr = self.stack_ptr.get();
         let (a, b) = self.excluded_stack_range.unwrap_or((curr, curr));
+        eprintln!("checking frame ranges 0 .. {a} and {b} .. {curr}");
         (0..=a).chain(b..=curr).rev().find(|&i| {
+            eprintln!(
+                "LOOKING AT FRAME {i} {:?}",
+                self.stack[i].as_ref().unwrap().keys().collect::<Vec<_>>()
+            );
             self.stack[i]
                 .as_ref()
                 .and_then(|frame| frame.get(ident))
+                .and_then(|(pos, _)| {
+                    eprintln!(
+                        "TRYING TO GET VAR {ident} at pos {pos}. Curr pos is {} {}",
+                        self.pos.get(),
+                        self.line.get(),
+                    );
+                    if *pos <= self.pos.get() {
+                        Some(())
+                    } else {
+                        None
+                    }
+                })
                 .is_some()
         })
     }
@@ -319,7 +340,7 @@ impl<'e, T: Write> Executor<'e, T> {
 
         let expr = expr.expect("eval only supports programs with one expression");
 
-        Ok(format!("{}", Self::print_value(self.eval_expr(expr)?)))
+        Ok(Self::print_value(self.eval_expr(expr)?))
     }
 
     pub fn run(&mut self) -> Result<'e, ()> {
@@ -331,17 +352,19 @@ impl<'e, T: Write> Executor<'e, T> {
     }
 
     fn set_line<A>(&self, node: &'e AstNode<A>) {
+        eprintln!("SETTING LINE TO {} {}", node.line(), node.pos());
         self.line.set(node.line());
+        self.pos.set(node.pos());
     }
 
     fn eval_var_decl(&mut self, var_decl: &'e VarDecl<'e>) -> Result<'e, ()> {
         let VarDecl { name, value } = var_decl;
-        let value = match value {
-            Some(v) => self.eval_expr(v)?,
-            None => Value::Primary(Primary::Nil),
+        let value_with_pos = match value {
+            Some(v) => (v.pos(), self.eval_expr(v)?),
+            None => (self.pos.get(), Value::Primary(Primary::Nil)),
         };
 
-        self.current_stack_frame().insert(name, value);
+        self.current_stack_frame().insert(name, value_with_pos);
 
         Ok(())
     }
@@ -358,14 +381,20 @@ impl<'e, T: Write> Executor<'e, T> {
             DeclKind::Var(v) => self.eval_var_decl(v)?,
             DeclKind::Fun { name, params, body } => {
                 let stack_ptr = self.stack_ptr.get();
+                let pos = self.pos.get();
+                eprintln!("SETTING FN {name} TO {pos} {}", self.line.get());
                 self.current_stack_frame().insert(
                     name,
-                    Value::Function {
-                        stack_ptr,
-                        name,
-                        params,
-                        body: body.kind().decls(),
-                    },
+                    (
+                        pos,
+                        Value::Function {
+                            pos,
+                            stack_ptr,
+                            name,
+                            params,
+                            body: body.kind().decls(),
+                        },
+                    ),
                 );
             }
         };
@@ -376,9 +405,10 @@ impl<'e, T: Write> Executor<'e, T> {
     fn eval_block_inner(
         &mut self,
         decls: impl IntoIterator<Item = &'e Decl<'e>>,
-        vars: Option<HashMap<&'e str, Value<'e>>>,
+        vars: Option<HashMap<&'e str, (usize, Value<'e>)>>,
         declr_stack_frame_on_ret: bool,
     ) -> Result<'e, ()> {
+        let (p_line, p_pos) = (self.line.get(), self.pos.get());
         self.incr_stack_frame(vars)?;
         for decl in decls {
             let res = self.eval_decl(decl);
@@ -391,11 +421,16 @@ impl<'e, T: Write> Executor<'e, T> {
                 if declr_stack_frame_on_ret {
                     self.decr_stack_frame();
                 }
+
+                self.pos.set(p_pos);
+                self.line.set(p_line);
             }
 
             res?;
         }
 
+        self.pos.set(p_pos);
+        self.line.set(p_line);
         self.decr_stack_frame();
 
         Ok(())
@@ -404,7 +439,7 @@ impl<'e, T: Write> Executor<'e, T> {
     fn eval_block(
         &mut self,
         decls: impl IntoIterator<Item = &'e Decl<'e>>,
-        vars: Option<HashMap<&'e str, Value<'e>>>,
+        vars: Option<HashMap<&'e str, (usize, Value<'e>)>>,
     ) -> Result<'e, ()> {
         self.eval_block_inner(decls, vars, true)
     }
@@ -484,6 +519,7 @@ impl<'e, T: Write> Executor<'e, T> {
         let v = match expr.kind() {
             ExprKind::Assign(ident, val) => {
                 let val = self.eval_expr(val)?;
+                eprintln!("GOT VAL {val}. ASSIGNING TO {ident}");
                 *self.resolve_var_mut(ident)? = val.clone();
 
                 val

@@ -1,6 +1,6 @@
 use codecrafters_interpreter::{
     eval::{ErrorKind, Executor},
-    lexer::{Keyword, Lexer, Symbol, Token},
+    lexer::{Keyword, Lexer, Token},
     parser::Parser,
 };
 
@@ -11,12 +11,8 @@ fn bool() {
     lexer.lex(src);
 
     assert_eq!(
-        lexer.tokens(),
-        [
-            Symbol::new(0, Token::Keyword(Keyword::True)),
-            Symbol::new(0, Token::Semicolon)
-        ]
-        .as_slice()
+        lexer.without_symbols(),
+        vec![Token::Keyword(Keyword::True), Token::Semicolon]
     );
 
     let mut parser = Parser::new(lexer.tokens());
@@ -169,13 +165,12 @@ fn print() {
 
     lexer.lex(src);
     assert_eq!(
-        lexer.tokens(),
-        [
-            Symbol::new(2, Token::Keyword(Keyword::Print)),
-            Symbol::new(2, Token::Number(123.44.into(), "123.44")),
-            Symbol::new(2, Token::Semicolon)
+        lexer.without_symbols(),
+        vec![
+            Token::Keyword(Keyword::Print),
+            Token::Number(123.44.into(), "123.44"),
+            Token::Semicolon
         ]
-        .as_slice()
     );
 
     let mut parser = Parser::new(lexer.tokens());
@@ -537,7 +532,7 @@ fn basic_fn_with_args() {
 
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
-    eprintln!("{:?}", executor.run());
+    executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
@@ -827,5 +822,90 @@ fn call_fun_returned_from_fn() {
     let mut lines = stdout.lines();
 
     assert_eq!(lines.next().unwrap(), "foo");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn local_var_after_fn_decl_should_not_affect() {
+    let src = r#"
+        var variable = "global";
+
+        {
+          fun f() {
+            print variable;
+          }
+
+          f(); // this should print "global"
+
+          // This variable declaration shouldn't affect
+          // the usage in `f` above.
+          var variable = "local";
+
+          f(); // this should still print "global"
+        }
+        "#;
+
+    let mut lexer = Lexer::new();
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "global");
+    assert_eq!(lines.next().unwrap(), "global");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn reassign_parameter() {
+    let src = r#"
+        fun square(x) {
+          return x * x;
+        }
+
+        // This higher-order function applies a
+        // function N times to a starting value x.
+        fun applyTimesN(N, f, x) {
+          var i = 0;
+          while (i < N) {
+            x = f(x);
+            i = i + 1;
+          }
+          return x;
+        }
+
+        // 5 is squared once
+        print applyTimesN(1, square, 5);
+        // 5 is squared twice
+        print applyTimesN(2, square, 5);
+        // 5 is squared thrice
+        print applyTimesN(3, square, 5);    
+    "#;
+
+    let mut lexer = Lexer::new();
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "25");
+    assert_eq!(lines.next().unwrap(), "625");
+    assert_eq!(lines.next().unwrap(), "390625");
     assert!(lines.next().is_none());
 }

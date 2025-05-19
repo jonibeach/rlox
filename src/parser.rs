@@ -322,13 +322,14 @@ impl Display for ExprKind<'_> {
 }
 
 trait IntoAst: Sized {
-    fn into_ast(self, parser: &Parser) -> AstNode<Self>;
+    fn into_ast(self, line_pos: (usize, usize)) -> AstNode<Self>;
 }
 
 impl<T> IntoAst for T {
-    fn into_ast(self, parser: &Parser) -> AstNode<T> {
+    fn into_ast(self, (line, pos): (usize, usize)) -> AstNode<T> {
         AstNode {
-            line: parser.line(),
+            line,
+            pos,
             kind: self,
         }
     }
@@ -337,6 +338,7 @@ impl<T> IntoAst for T {
 #[derive(Debug, PartialEq)]
 pub struct AstNode<K> {
     line: usize,
+    pos: usize,
     kind: K,
 }
 
@@ -354,6 +356,10 @@ impl<K> AstNode<K> {
 
     pub fn line(&self) -> usize {
         self.line
+    }
+
+    pub fn pos(&self) -> usize {
+        self.pos
     }
 }
 
@@ -456,6 +462,13 @@ impl<'src> Parser<'src> {
             .unwrap_or(0)
     }
 
+    fn pos(&self) -> usize {
+        self.peek_symbol()
+            .or(self.tokens.last().copied())
+            .map(|t| t.pos())
+            .unwrap_or(0)
+    }
+
     fn get_symbol(&self, idx: usize) -> AcceptSymbol<'src> {
         self.tokens.get(idx).copied()
     }
@@ -550,8 +563,13 @@ impl<'src> Parser<'src> {
         Err(self.err_inner(kind))
     }
 
+    fn line_pos(&self) -> (usize, usize) {
+        (self.line(), self.pos())
+    }
+
     /// program        → declaration* EOF ;
     pub fn parse(&mut self) -> std::result::Result<Program<'src>, &Vec<Error<'src>>> {
+        let line_pos = self.line_pos();
         let mut decls = Vec::new();
 
         while self.peek().is_some() {
@@ -567,7 +585,7 @@ impl<'src> Parser<'src> {
         if !self.errors.is_empty() {
             Err(&self.errors)
         } else {
-            Ok(Program(BlockInner { decls }.into_ast(self)))
+            Ok(Program(BlockInner { decls }.into_ast(line_pos)))
         }
     }
 
@@ -580,6 +598,7 @@ impl<'src> Parser<'src> {
     ///                 | block ;
     fn parse_stmt(&mut self) -> Result<'src, Stmt<'src>> {
         eprintln!("parsing stmt {:?}", self.peek());
+        let line_pos = self.line_pos();
         match self.next() {
             Some(Token::Keyword(Keyword::For)) => self.parse_for_stmt(),
             Some(Token::Keyword(Keyword::If)) => self.parse_if_stmt(),
@@ -589,7 +608,7 @@ impl<'src> Parser<'src> {
                 let expr = self.parse_expr()?;
                 self.expect_after(Token::Semicolon, "value")?;
 
-                Ok(StmtKind::Print(expr).into_ast(self))
+                Ok(StmtKind::Print(expr).into_ast(line_pos))
             }
             Some(Token::Keyword(Keyword::Return)) => {
                 // returnStmt     → "return" expression? ";" ;
@@ -598,13 +617,13 @@ impl<'src> Parser<'src> {
                 let expr = self.parse_expr().ok();
                 self.expect_after(Token::Semicolon, "return value")?;
 
-                Ok(StmtKind::Return(expr).into_ast(self))
+                Ok(StmtKind::Return(expr).into_ast(line_pos))
             }
             Some(Token::Keyword(Keyword::While)) => self.parse_while_stmt(),
-            Some(Token::LeftBrace) => Ok(StmtKind::Block(self.parse_block()?).into_ast(self)),
+            Some(Token::LeftBrace) => Ok(StmtKind::Block(self.parse_block()?).into_ast(line_pos)),
             _ => {
                 self.prev().unwrap();
-                Ok(StmtKind::Expr(self.parse_expr_stmt()?).into_ast(self))
+                Ok(StmtKind::Expr(self.parse_expr_stmt()?).into_ast(line_pos))
             }
         }
     }
@@ -626,6 +645,7 @@ impl<'src> Parser<'src> {
     ///                        expression? ";"
     ///                        expression? ")" statement ;
     fn parse_for_stmt(&mut self) -> Result<'src, Stmt<'src>> {
+        let line_pos = self.line_pos();
         self.expect_after_token(Token::LeftParen)?;
         eprintln!("parsing for stmt {:?}", self.peek());
         let begin = match self.next() {
@@ -685,12 +705,13 @@ impl<'src> Parser<'src> {
             after_iter,
             body,
         }
-        .into_ast(self))
+        .into_ast(line_pos))
     }
 
     /// ifStmt         → "if" "(" expression ")" statement
     ///              ( "else" statement )? ;
     fn parse_if_stmt(&mut self) -> Result<'src, Stmt<'src>> {
+        let line_pos = self.line_pos();
         self.expect_after_token(Token::LeftParen)?;
         let condition = self.parse_expr()?;
         self.expect_after(Token::RightParen, "if condition")?;
@@ -708,22 +729,24 @@ impl<'src> Parser<'src> {
             body,
             el,
         }
-        .into_ast(self))
+        .into_ast(line_pos))
     }
 
     /// whileStmt      → "while" "(" expression ")" statement ;
     fn parse_while_stmt(&mut self) -> Result<'src, Stmt<'src>> {
+        let line_pos = self.line_pos();
         self.expect_after_token(Token::LeftParen)?;
         let condition = self.parse_expr()?;
         self.expect_after(Token::RightParen, "condition")?;
         let body = self.parse_stmt()?.into();
 
-        Ok(StmtKind::While { condition, body }.into_ast(self))
+        Ok(StmtKind::While { condition, body }.into_ast(line_pos))
     }
 
     /// block          → "{" declaration* "}";
     fn parse_block(&mut self) -> Result<'src, Block<'src>> {
         eprintln!("parsing block");
+        let line_pos = self.line_pos();
 
         let mut decls = Vec::new();
         while !matches!(self.peek(), Some(Token::RightBrace) | None) {
@@ -739,20 +762,22 @@ impl<'src> Parser<'src> {
 
         eprintln!("valid block");
 
-        Ok(BlockInner { decls }.into_ast(self))
+        Ok(BlockInner { decls }.into_ast(line_pos))
     }
 
     /// declaration    → funDecl | varDecl | statement;
     fn parse_decl(&mut self) -> Option<Decl<'src>> {
+        let line_pos = self.line_pos();
         eprintln!("parsing decl {:?}", self.peek());
         let maybe_decl = match self.next() {
             Some(Token::Keyword(Keyword::Fun)) => self.parse_fun_decl(),
             Some(Token::Keyword(Keyword::Var)) => self
                 .parse_var_decl()
-                .map(|v| DeclKind::Var(v).into_ast(self)),
+                .map(|v| DeclKind::Var(v).into_ast(line_pos)),
             _ => {
                 self.prev().unwrap();
-                self.parse_stmt().map(|s| DeclKind::Stmt(s).into_ast(self))
+                self.parse_stmt()
+                    .map(|s| DeclKind::Stmt(s).into_ast(line_pos))
             }
         };
 
@@ -797,6 +822,7 @@ impl<'src> Parser<'src> {
     /// funDecl        → "fun" function ;
     /// function       → IDENTIFIER "(" parameters? ")" block ;
     fn parse_fun_decl(&mut self) -> Result<'src, Decl<'src>> {
+        let line_pos = self.line_pos();
         let Some(Token::Identifier(name)) = self.next() else {
             return self.custom_err("function name");
         };
@@ -813,7 +839,7 @@ impl<'src> Parser<'src> {
 
         eprintln!("parsed block body {body}");
 
-        Ok(DeclKind::Fun { name, params, body }.into_ast(self))
+        Ok(DeclKind::Fun { name, params, body }.into_ast(line_pos))
     }
 
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
@@ -857,6 +883,7 @@ impl<'src> Parser<'src> {
 
     // logic_or       → logic_and ( "or" logic_and )* ;
     fn parse_logic_or(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         eprintln!("parsing logic or");
         let mut a = self.parse_logic_and()?;
         eprintln!("parsed logic or {a}");
@@ -865,7 +892,7 @@ impl<'src> Parser<'src> {
             self.next().unwrap();
             let b = self.parse_logic_and()?;
 
-            a = ExprKind::Or(a.into(), b.into()).into_ast(self);
+            a = ExprKind::Or(a.into(), b.into()).into_ast(line_pos);
         }
 
         eprintln!("done with logic or {a}");
@@ -875,6 +902,7 @@ impl<'src> Parser<'src> {
 
     /// logic_and      → equality ( "and" equality )* ;
     fn parse_logic_and(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         eprintln!("parsing logic and");
         let mut a = self.parse_eq()?;
 
@@ -884,7 +912,7 @@ impl<'src> Parser<'src> {
             self.next().unwrap();
             let b = self.parse_eq()?;
 
-            a = ExprKind::And(a.into(), b.into()).into_ast(self);
+            a = ExprKind::And(a.into(), b.into()).into_ast(line_pos);
         }
 
         eprintln!("done with logic and {a}");
@@ -894,6 +922,7 @@ impl<'src> Parser<'src> {
 
     /// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
     fn parse_eq(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         eprintln!("parsing eq");
         let mut a = self.parse_cmp()?;
 
@@ -907,7 +936,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_cmp()?;
             eprintln!("accepted eq {a} {op:?} {b}");
-            a = ExprKind::Eq(a.into(), op, b.into()).into_ast(self);
+            a = ExprKind::Eq(a.into(), op, b.into()).into_ast(line_pos);
         }
 
         eprintln!("done with eq {a}");
@@ -917,6 +946,7 @@ impl<'src> Parser<'src> {
 
     /// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
     fn parse_cmp(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         let mut a = self.parse_term()?;
 
         eprintln!("parsing cmp {a}");
@@ -933,7 +963,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_term()?;
             eprintln!("accepted cmp {a} {op:?} {b}");
-            a = ExprKind::Cmp(a.into(), op, b.into()).into_ast(self);
+            a = ExprKind::Cmp(a.into(), op, b.into()).into_ast(line_pos);
         }
 
         Ok(a)
@@ -941,6 +971,7 @@ impl<'src> Parser<'src> {
 
     /// term           → factor ( ( "-" | "+" ) factor )* ;
     fn parse_term(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         let mut a = self.parse_factor()?;
         eprintln!("parsing term {a}");
 
@@ -952,7 +983,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_factor()?;
             eprintln!("accepted term {a} {op:?} {b}");
-            a = ExprKind::Term(a.into(), op, b.into()).into_ast(self);
+            a = ExprKind::Term(a.into(), op, b.into()).into_ast(line_pos);
         }
 
         Ok(a)
@@ -960,6 +991,7 @@ impl<'src> Parser<'src> {
 
     /// factor         → unary ( ( "/" | "*" ) unary )* ;
     fn parse_factor(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         let mut a = self.parse_unary()?;
 
         eprintln!("parsing factor {a}");
@@ -972,7 +1004,7 @@ impl<'src> Parser<'src> {
             };
             let b = self.parse_unary()?;
             eprintln!("accepted factor {a} {op:?} {b}");
-            a = ExprKind::Factor(a.into(), op, b.into()).into_ast(self)
+            a = ExprKind::Factor(a.into(), op, b.into()).into_ast(line_pos)
         }
 
         Ok(a)
@@ -980,6 +1012,7 @@ impl<'src> Parser<'src> {
 
     /// unary          → ( "!" | "-" ) unary | call ;
     fn parse_unary(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         let unary = self
             .accept(Token::Bang)
             .or_else(|| self.accept(Token::Minus));
@@ -995,7 +1028,7 @@ impl<'src> Parser<'src> {
 
             eprintln!("accepted unary {op} {unary}");
 
-            Ok(ExprKind::Unary(op, self.parse_unary()?.into()).into_ast(self))
+            Ok(ExprKind::Unary(op, self.parse_unary()?.into()).into_ast(line_pos))
         } else {
             eprintln!("not unary {:?}", self.peek());
             self.parse_call()
@@ -1026,6 +1059,7 @@ impl<'src> Parser<'src> {
 
     /// call           → primary ( "(" arguments? ")" )* ;
     fn parse_call(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         let mut call = self.parse_primary()?;
 
         eprintln!("maybe parsing call {call}");
@@ -1042,7 +1076,7 @@ impl<'src> Parser<'src> {
                 callee: call.into(),
                 args,
             }
-            .into_ast(self);
+            .into_ast(line_pos);
         }
 
         Ok(call)
@@ -1051,6 +1085,7 @@ impl<'src> Parser<'src> {
     /// accepts this part of primary
     ///     "(" expression ")"
     fn parse_group(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         eprintln!("parsing group");
 
         let inner = self.parse_expr()?;
@@ -1059,12 +1094,13 @@ impl<'src> Parser<'src> {
 
         eprintln!("parsing group DONE");
 
-        Ok(ExprKind::Group(inner.into()).into_ast(self))
+        Ok(ExprKind::Group(inner.into()).into_ast(line_pos))
     }
 
     /// primary        → NUMBER | STRING | "true" | "false" | "nil"
     ///                 | "(" expression ")" | IDENTIFIER "=" expression
     fn parse_primary(&self) -> Result<'src, Expr<'src>> {
+        let line_pos = self.line_pos();
         eprintln!("parisng primary {:?}", self.peek());
         let ast = match self.next() {
             Some(Token::Number(n, _)) => Primary::Number(n),
@@ -1078,9 +1114,9 @@ impl<'src> Parser<'src> {
                     self.next().unwrap();
                     let inner = self.parse_expr()?;
 
-                    return Ok(ExprKind::Assign(i, inner.into()).into_ast(self));
+                    return Ok(ExprKind::Assign(i, inner.into()).into_ast(line_pos));
                 } else {
-                    return Ok(ExprKind::Ident(i).into_ast(self));
+                    return Ok(ExprKind::Ident(i).into_ast(line_pos));
                 }
             }
             Some(Token::LeftParen) => {
@@ -1096,6 +1132,6 @@ impl<'src> Parser<'src> {
 
         eprintln!("accepted primary {ast}");
 
-        Ok(ExprKind::Primary(ast).into_ast(self))
+        Ok(ExprKind::Primary(ast).into_ast(line_pos))
     }
 }

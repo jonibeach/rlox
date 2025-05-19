@@ -17,6 +17,10 @@ impl<'src> Lexer<'src> {
         &self.tokens
     }
 
+    pub fn without_symbols(&self) -> Vec<Token> {
+        self.tokens().into_iter().map(|t| t.token()).collect()
+    }
+
     pub fn new() -> Self {
         Default::default()
     }
@@ -37,6 +41,7 @@ impl<'src> Lexer<'src> {
                 ($inner: expr) => {
                     self.errors.push(Symbol {
                         line,
+                        pos,
                         inner: $inner,
                     })
                 };
@@ -168,7 +173,7 @@ impl<'src> Lexer<'src> {
             };
 
             if let Some(next_token) = next_token {
-                self.tokens.push(Symbol::new(line, next_token));
+                self.tokens.push(Symbol::new(line, pos, next_token));
             }
 
             next = chars.next();
@@ -176,7 +181,7 @@ impl<'src> Lexer<'src> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Error {
     UnexpectedCharacter(char),
     UnterminatedString,
@@ -185,12 +190,13 @@ pub enum Error {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Symbol<T> {
     line: usize,
+    pos: usize,
     inner: T,
 }
 
 impl<T> Symbol<T> {
-    pub fn new(line: usize, inner: T) -> Self {
-        Self { line, inner }
+    pub fn new(line: usize, pos: usize, inner: T) -> Self {
+        Self { line, pos, inner }
     }
 }
 
@@ -200,13 +206,17 @@ impl Display for Symbol<Token<'_>> {
     }
 }
 
-impl<'src> Symbol<Token<'src>> {
-    pub fn token(&self) -> Token<'src> {
+impl<T: Copy> Symbol<T> {
+    pub fn token(&self) -> T {
         self.inner
     }
 
     pub fn line(&self) -> usize {
         self.line
+    }
+
+    pub fn pos(&self) -> usize {
+        self.pos
     }
 }
 
