@@ -502,14 +502,12 @@ fn basic_fn() {
     assert_eq!(format!("{}", decls.next().unwrap()), "(call (ident baz))");
 
     let mut stdout: Vec<u8> = Vec::new();
-    eprintln!("HERERER");
     let mut executor = Executor::new(program.decls(), &mut stdout);
-    eprintln!("{:?}", executor.run());
-    eprintln!("HERERER");
+    executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
-    assert_eq!(format!("{}", lines.next().unwrap()), "97");
+    assert_eq!(lines.next().unwrap(), "97");
     assert!(lines.next().is_none());
 }
 
@@ -543,7 +541,7 @@ fn basic_fn_with_args() {
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
-    assert_eq!(format!("{}", lines.next().unwrap()), "49");
+    assert_eq!(lines.next().unwrap(), "49");
     assert!(lines.next().is_none());
 }
 
@@ -576,10 +574,10 @@ fn basic_fn_with_early_return() {
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
-    assert_eq!(format!("{}", lines.next().unwrap()), "20");
-    assert_eq!(format!("{}", lines.next().unwrap()), "133");
-    assert_eq!(format!("{}", lines.next().unwrap()), "20");
-    assert_eq!(format!("{}", lines.next().unwrap()), "340");
+    assert_eq!(lines.next().unwrap(), "20");
+    assert_eq!(lines.next().unwrap(), "133");
+    assert_eq!(lines.next().unwrap(), "20");
+    assert_eq!(lines.next().unwrap(), "340");
     assert!(lines.next().is_none());
 }
 
@@ -611,11 +609,11 @@ fn fib() {
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
-    assert_eq!(format!("{}", lines.next().unwrap()), "3");
-    assert_eq!(format!("{}", lines.next().unwrap()), "true");
-    assert_eq!(format!("{}", lines.next().unwrap()), "55");
-    assert_eq!(format!("{}", lines.next().unwrap()), "6765");
-    assert!(format!("{}", lines.next().unwrap()).parse::<f64>().is_ok());
+    assert_eq!(lines.next().unwrap(), "3");
+    assert_eq!(lines.next().unwrap(), "true");
+    assert_eq!(lines.next().unwrap(), "55");
+    assert_eq!(lines.next().unwrap(), "6765");
+    assert!(lines.next().unwrap().parse::<f64>().is_ok());
     assert!(lines.next().is_none());
 }
 
@@ -663,15 +661,99 @@ fn higher_ord_fun() {
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
     let mut executor = Executor::new(program.decls(), &mut stdout);
-    eprintln!("{:?}", executor.run());
+    executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
-    assert_eq!(format!("{}", lines.next().unwrap()), "Numbers >= 2:");
+    assert_eq!(lines.next().unwrap(), "Numbers >= 2:");
     for i in 2..5 {
-        assert_eq!(format!("{}", lines.next().unwrap()), i.to_string());
+        assert_eq!(lines.next().unwrap(), i.to_string());
     }
-    assert_eq!(format!("{}", lines.next().unwrap()), "Numbers >= 4:");
-    assert_eq!(format!("{}", lines.next().unwrap()), "4");
+    assert_eq!(lines.next().unwrap(), "Numbers >= 4:");
+    assert_eq!(lines.next().unwrap(), "4");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn scopes() {
+    let src = r#"
+        var x = 1;
+        var y = 2;
+
+        fun printBoth() {
+            if (x < y) {
+                print "x is less than y:";
+                print x;
+                print y;
+            } else {
+                print "x is not less than y:";
+                print x;
+                print y;
+            }
+        }
+ 
+        {
+            var x = 10;
+            {
+                var y = 20;
+
+                var i = 0;
+                while (i < 3) {
+                    x = x + 1;
+                    y = y - 1;
+                    print "Local x: ";
+                    print x;
+                    print "Local y: ";
+                    print y;
+                    i = i + 1;
+                }
+
+                if (x > y) {
+                    print "Local x > y";
+                }
+
+                printBoth();
+            }
+        }
+
+        if (x == 1 and y == 2) {
+            print "Globals unchanged:";
+            printBoth();
+        }
+    "#;
+
+    let mut lexer = Lexer::new();
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+    let (mut x, mut y) = (10, 20);
+    let mut i = 0;
+    while i < 3 {
+        x += 1;
+        y -= 1;
+        assert_eq!(lines.next().unwrap(), "Local x: ");
+        assert_eq!(lines.next().unwrap(), x.to_string());
+        assert_eq!(lines.next().unwrap(), "Local y: ");
+        assert_eq!(lines.next().unwrap(), y.to_string());
+        i += 1;
+    }
+
+    assert_eq!(lines.next().unwrap(), "x is less than y:");
+    assert_eq!(lines.next().unwrap(), "1");
+    assert_eq!(lines.next().unwrap(), "2");
+
+    assert_eq!(lines.next().unwrap(), "Globals unchanged:");
+    assert_eq!(lines.next().unwrap(), "x is less than y:");
+    assert_eq!(lines.next().unwrap(), "1");
+    assert_eq!(lines.next().unwrap(), "2");
     assert!(lines.next().is_none());
 }
