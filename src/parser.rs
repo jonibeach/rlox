@@ -380,6 +380,7 @@ pub enum ErrorKind<'src> {
     TokenAfterToken(Token<'src>, Token<'src>),
     CantReadLocalVarInOwnInit,
     DuplicateVariable,
+    InvalidReturn,
 }
 
 impl Display for ErrorKind<'_> {
@@ -396,6 +397,7 @@ impl Display for ErrorKind<'_> {
             Self::DuplicateVariable => {
                 f.write_str("Already a variable with this name in this scope")
             }
+            Self::InvalidReturn => f.write_str("Can't return from top-level code."),
         }
     }
 }
@@ -444,6 +446,7 @@ pub struct Parser<'src> {
     idx: Cell<usize>,
     is_global_scope: bool,
     declaring_var: Cell<Option<&'src str>>,
+    fn_count: usize,
     defined_vars_in_scope: HashSet<&'src str>,
     force_ending_semicolon: bool,
     errors: Vec<Error<'src>>,
@@ -456,6 +459,7 @@ impl<'src> Parser<'src> {
             idx: 0.into(),
             declaring_var: None.into(),
             is_global_scope: true,
+            fn_count: 0,
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: false,
             errors: Vec::new(),
@@ -466,6 +470,7 @@ impl<'src> Parser<'src> {
             tokens,
             idx: 0.into(),
             is_global_scope: true,
+            fn_count: 0,
             declaring_var: None.into(),
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: true,
@@ -630,6 +635,10 @@ impl<'src> Parser<'src> {
             }
             Some(Token::Keyword(Keyword::Return)) => {
                 // returnStmt     → "return" expression? ";" ;
+                if self.fn_count == 0 {
+                    self.prev().unwrap();
+                    return self.err(ErrorKind::DuplicateVariable);
+                }
 
                 eprintln!("parsing return stmt");
                 let expr = self.parse_expr().ok();
@@ -907,7 +916,9 @@ impl<'src> Parser<'src> {
 
         self.expect_after(Token::RightParen, "parameters")?;
         self.expect_custom(Token::LeftBrace, "before function body")?;
+        self.fn_count += 1;
         let body = self.parse_block(Some(HashSet::from_iter(params.iter().copied())))?;
+        self.fn_count -= 1;
 
         eprintln!("parsed block body {body}");
 
