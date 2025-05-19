@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     cell::Cell,
+    collections::HashSet,
     fmt::{Debug, Display},
 };
 
@@ -377,6 +378,7 @@ pub enum ErrorKind<'src> {
     Custom(&'static str),
     TokenAfter(Token<'src>, &'static str),
     TokenAfterToken(Token<'src>, Token<'src>),
+    CantReadLocalVarInOwnInit,
 }
 
 impl Display for ErrorKind<'_> {
@@ -386,6 +388,9 @@ impl Display for ErrorKind<'_> {
             Self::TokenAfter(t, a) => write!(f, "Expect '{}' after {a}.", t.lexeme()),
             Self::TokenAfterToken(a, b) => {
                 write!(f, "Expect '{}' after '{}'.", a.lexeme(), b.lexeme())
+            }
+            Self::CantReadLocalVarInOwnInit => {
+                write!(f, "Can't read local variable in its own initializer.")
             }
         }
     }
@@ -433,6 +438,8 @@ type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
     idx: Cell<usize>,
+    declaring_var: Cell<Option<&'src str>>,
+    defined_vars_in_scope: HashSet<&'src str>,
     force_ending_semicolon: bool,
     errors: Vec<Error<'src>>,
 }
@@ -442,6 +449,8 @@ impl<'src> Parser<'src> {
         Self {
             tokens,
             idx: 0.into(),
+            declaring_var: None.into(),
+            defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: false,
             errors: Vec::new(),
         }
@@ -450,6 +459,8 @@ impl<'src> Parser<'src> {
         Self {
             tokens,
             idx: 0.into(),
+            declaring_var: None.into(),
+            defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: true,
             errors: Vec::new(),
         }
@@ -747,6 +758,10 @@ impl<'src> Parser<'src> {
     fn parse_block(&mut self) -> Result<'src, Block<'src>> {
         eprintln!("parsing block");
         let line_pos = self.line_pos();
+        let prev = std::mem::replace(&mut self.defined_vars_in_scope, HashSet::new());
+
+        eprintln!("PREV DECLARED VARS {:?}", prev);
+        eprintln!("CURR DECLARED VARS {:?}", self.defined_vars_in_scope);
 
         let mut decls = Vec::new();
         while !matches!(self.peek(), Some(Token::RightBrace) | None) {
@@ -759,6 +774,9 @@ impl<'src> Parser<'src> {
         eprintln!("end of block or file");
 
         self.expect_after(Token::RightBrace, "block")?;
+
+        self.defined_vars_in_scope = prev;
+        eprintln!("SET BACK TO PREV {:?}", self.defined_vars_in_scope);
 
         eprintln!("valid block");
 
@@ -784,6 +802,7 @@ impl<'src> Parser<'src> {
         match maybe_decl {
             Ok(decl) => Some(decl),
             Err(e) => {
+                eprintln!("ERR {e}");
                 self.errors.push(e);
 
                 self.recover();
@@ -839,17 +858,22 @@ impl<'src> Parser<'src> {
 
         eprintln!("parsed block body {body}");
 
+        self.defined_vars_in_scope.insert(name);
+
         Ok(DeclKind::Fun { name, params, body }.into_ast(line_pos))
     }
 
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
-    fn parse_var_decl(&self) -> Result<'src, VarDecl<'src>> {
+    fn parse_var_decl(&mut self) -> Result<'src, VarDecl<'src>> {
         eprintln!("parsing var decl {:?}", self.peek());
 
         let Some(Token::Identifier(name)) = self.next() else {
             eprintln!("didn't get ident");
             return self.custom_err("variable name");
         };
+
+        eprintln!("SETTING DECL VAR TO {name}");
+        self.declaring_var.set(Some(name));
 
         let var_decl = match self.next() {
             Some(Token::Equal) => {
@@ -865,12 +889,16 @@ impl<'src> Parser<'src> {
             Some(Token::Semicolon) => VarDecl { name, value: None },
             other => {
                 eprintln!("got non equal {other:?}");
+                self.declaring_var.set(None);
                 return self.err(ErrorKind::TokenAfter(
                     Token::Semicolon,
                     "variable declaration",
                 ));
             }
         };
+
+        self.defined_vars_in_scope.insert(name);
+        self.declaring_var.set(None);
 
         Ok(var_decl)
     }
@@ -1039,10 +1067,13 @@ impl<'src> Parser<'src> {
     fn parse_arguments(&self) -> Result<'src, Vec<Expr<'src>>> {
         let mut args = Vec::new();
 
-        if let Ok(a) = self.parse_expr() {
-            args.push(a);
+        eprintln!("parsing args");
+        if self.peek() == Some(Token::RightParen) {
+            eprintln!("got zero args");
+            return Ok(args);
         }
 
+        args.push(self.parse_expr()?);
         eprintln!("got first arg {args:?}");
 
         while let Some(Token::Comma) = self.peek() {
@@ -1109,6 +1140,25 @@ impl<'src> Parser<'src> {
             Some(Token::Keyword(Keyword::False)) => Primary::Bool(false),
             Some(Token::Keyword(Keyword::Nil)) => Primary::Nil,
             Some(Token::Identifier(i)) => {
+                eprintln!("ACCESSING VAR {i}");
+                if let Some(declaring_var) = self.declaring_var.get() {
+                    eprintln!(
+                        "ALREADY DECLARING VAR {declaring_var} {:?}",
+                        self.defined_vars_in_scope
+                    );
+                    eprintln!(
+                        "DECLARED VARS {:?} {i} == {declaring_var} {} {}",
+                        self.defined_vars_in_scope,
+                        !self.defined_vars_in_scope.contains(i),
+                        !self.defined_vars_in_scope.contains(i) && declaring_var == i
+                    );
+                    if !self.defined_vars_in_scope.contains(i) && declaring_var == i {
+                        eprintln!("RETURNING ERR");
+                        self.prev().unwrap();
+                        return self.err(ErrorKind::CantReadLocalVarInOwnInit);
+                    }
+                }
+
                 eprintln!("GOT IDENT {:?}", self.peek());
                 if let Some(Token::Equal) = self.peek() {
                     self.next().unwrap();

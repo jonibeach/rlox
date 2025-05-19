@@ -327,3 +327,38 @@ fn early_return() {
     );
 }
 
+#[test]
+fn nested_reference_to_current_var_in_init() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        fun returnArg(arg) {
+          return arg;
+        }
+
+        // Declare global variable 'b'
+        var b = "global";
+
+        {
+          // Local variable declaration
+          var a = "first";
+
+          // Attempting to initialize local variable 'b'
+          // using local variable 'b'
+          // through a function call
+          var b = returnArg(b); // expect compile error
+          print b;
+        }
+    "#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let errors = parser.parse().unwrap_err();
+
+    assert_eq!(
+        format!("{}", errors.first().unwrap()),
+        "[line 16] Error at 'b': Can't read local variable in its own initializer."
+    );
+}
