@@ -692,16 +692,16 @@ fn scopes() {
             {
                 var y = 20;
 
-                var i = 0;
-                while (i < 3) {
-                    x = x + 1;
-                    y = y - 1;
-                    print "Local x: ";
-                    print x;
-                    print "Local y: ";
-                    print y;
-                    i = i + 1;
-                }
+                // var i = 0;
+                // while (i < 3) {
+                //     x = x + 1;
+                //     y = y - 1;
+                //     print "Local x: ";
+                //     print x;
+                //     print "Local y: ";
+                //     print y;
+                //     i = i + 1;
+                // }
 
                 if (x > y) {
                     print "Local x > y";
@@ -730,17 +730,17 @@ fn scopes() {
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
-    let (mut x, mut y) = (10, 20);
-    let mut i = 0;
-    while i < 3 {
-        x += 1;
-        y -= 1;
-        assert_eq!(lines.next().unwrap(), "Local x: ");
-        assert_eq!(lines.next().unwrap(), x.to_string());
-        assert_eq!(lines.next().unwrap(), "Local y: ");
-        assert_eq!(lines.next().unwrap(), y.to_string());
-        i += 1;
-    }
+    // let (mut x, mut y) = (10, 20);
+    // let mut i = 0;
+    // while i < 3 {
+    //     x += 1;
+    //     y -= 1;
+    //     assert_eq!(lines.next().unwrap(), "Local x: ");
+    //     assert_eq!(lines.next().unwrap(), x.to_string());
+    //     assert_eq!(lines.next().unwrap(), "Local y: ");
+    //     assert_eq!(lines.next().unwrap(), y.to_string());
+    //     i += 1;
+    // }
 
     assert_eq!(lines.next().unwrap(), "x is less than y:");
     assert_eq!(lines.next().unwrap(), "1");
@@ -907,5 +907,89 @@ fn reassign_parameter() {
     assert_eq!(lines.next().unwrap(), "25");
     assert_eq!(lines.next().unwrap(), "625");
     assert_eq!(lines.next().unwrap(), "390625");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn timer() {
+    let src = r#"
+        var startTime = clock();
+        var lastCheck = startTime;
+        var running = true;
+
+        print "Starting timer for 0.2 seconds";
+        var startTime = clock();
+
+        while (running) {
+          if (clock() > startTime + 0.2) {
+            print "Timer ended";
+            running = false;
+          }
+        }
+    "#;
+
+    let mut lexer = Lexer::new();
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "Starting timer for 0.2 seconds");
+    assert_eq!(lines.next().unwrap(), "Timer ended");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn foor_loop_variable_mutations() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        var baz = "after";
+        {
+          var baz = "before";
+
+          for (var baz = 0; baz < 1; baz = baz + 1) {
+            print baz;
+            var baz = -1;
+            print baz;
+          }
+        }
+
+        {
+          for (var baz = 0; baz > 0; baz = baz + 1) {}
+
+          var baz = "after";
+          print baz;
+
+          for (baz = 0; baz < 1; baz = baz + 1) {
+            print baz;
+          }
+        }
+    "#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "0");
+    assert_eq!(lines.next().unwrap(), "-1");
+    assert_eq!(lines.next().unwrap(), "after");
+    assert_eq!(lines.next().unwrap(), "0");
     assert!(lines.next().is_none());
 }

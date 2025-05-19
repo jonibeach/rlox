@@ -379,6 +379,7 @@ pub enum ErrorKind<'src> {
     TokenAfter(Token<'src>, &'static str),
     TokenAfterToken(Token<'src>, Token<'src>),
     CantReadLocalVarInOwnInit,
+    DuplicateVariable,
 }
 
 impl Display for ErrorKind<'_> {
@@ -390,7 +391,10 @@ impl Display for ErrorKind<'_> {
                 write!(f, "Expect '{}' after '{}'.", a.lexeme(), b.lexeme())
             }
             Self::CantReadLocalVarInOwnInit => {
-                write!(f, "Can't read local variable in its own initializer.")
+                f.write_str("Can't read local variable in its own initializer.")
+            }
+            Self::DuplicateVariable => {
+                f.write_str("Already a variable with this name in this scope")
             }
         }
     }
@@ -438,6 +442,7 @@ type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
 pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
     idx: Cell<usize>,
+    is_global_scope: bool,
     declaring_var: Cell<Option<&'src str>>,
     defined_vars_in_scope: HashSet<&'src str>,
     force_ending_semicolon: bool,
@@ -450,6 +455,7 @@ impl<'src> Parser<'src> {
             tokens,
             idx: 0.into(),
             declaring_var: None.into(),
+            is_global_scope: true,
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: false,
             errors: Vec::new(),
@@ -459,6 +465,7 @@ impl<'src> Parser<'src> {
         Self {
             tokens,
             idx: 0.into(),
+            is_global_scope: true,
             declaring_var: None.into(),
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: true,
@@ -631,7 +638,9 @@ impl<'src> Parser<'src> {
                 Ok(StmtKind::Return(expr).into_ast(line_pos))
             }
             Some(Token::Keyword(Keyword::While)) => self.parse_while_stmt(),
-            Some(Token::LeftBrace) => Ok(StmtKind::Block(self.parse_block()?).into_ast(line_pos)),
+            Some(Token::LeftBrace) => {
+                Ok(StmtKind::Block(self.parse_block(None)?).into_ast(line_pos))
+            }
             _ => {
                 self.prev().unwrap();
                 Ok(StmtKind::Expr(self.parse_expr_stmt()?).into_ast(line_pos))
@@ -656,67 +665,69 @@ impl<'src> Parser<'src> {
     ///                        expression? ";"
     ///                        expression? ")" statement ;
     fn parse_for_stmt(&mut self) -> Result<'src, Stmt<'src>> {
-        let line_pos = self.line_pos();
-        self.expect_after_token(Token::LeftParen)?;
-        eprintln!("parsing for stmt {:?}", self.peek());
-        let begin = match self.next() {
-            Some(Token::Semicolon) => {
-                eprintln!("got empty begin");
-                None
-            }
-            other => Some(match other {
-                Some(Token::Keyword(Keyword::Var)) => ForBegin::VarDecl(self.parse_var_decl()?),
-                _ => {
-                    self.prev().unwrap();
-                    ForBegin::Expr(self.parse_expr_stmt()?)
+        self.with_inner_bloc(None, |s| {
+            let line_pos = s.line_pos();
+            s.expect_after_token(Token::LeftParen)?;
+            eprintln!("parsing for stmt {:?}", s.peek());
+            let begin = match s.next() {
+                Some(Token::Semicolon) => {
+                    eprintln!("got empty begin");
+                    None
                 }
-            }),
-        };
+                other => Some(match other {
+                    Some(Token::Keyword(Keyword::Var)) => ForBegin::VarDecl(s.parse_var_decl()?),
+                    _ => {
+                        s.prev().unwrap();
+                        ForBegin::Expr(s.parse_expr_stmt()?)
+                    }
+                }),
+            };
 
-        eprintln!(
-            "got begin {} {:?}",
-            begin.as_ref().map(|i| format!("{i}")).unwrap_or_default(),
-            self.peek()
-        );
+            eprintln!(
+                "got begin {} {:?}",
+                begin.as_ref().map(|i| format!("{i}")).unwrap_or_default(),
+                s.peek()
+            );
 
-        let condition = match (self.parse_expr(), self.next()) {
-            (Err(_), Some(Token::Semicolon)) => None,
-            (Ok(c), Some(Token::Semicolon)) => Some(c),
-            (Ok(_), _) => return self.err(ErrorKind::TokenAfter(Token::Semicolon, "condition")),
-            (Err(e), _) => return Err(e),
-        };
+            let condition = match (s.parse_expr(), s.next()) {
+                (Err(_), Some(Token::Semicolon)) => None,
+                (Ok(c), Some(Token::Semicolon)) => Some(c),
+                (Ok(_), _) => return s.err(ErrorKind::TokenAfter(Token::Semicolon, "condition")),
+                (Err(e), _) => return Err(e),
+            };
 
-        eprintln!("HERR {:?} {:?}", self.peek(), condition);
+            eprintln!("HERR {:?} {:?}", s.peek(), condition);
 
-        eprintln!(
-            "got cond {}",
-            condition
-                .as_ref()
-                .map(|i| format!("{i}"))
-                .unwrap_or_default()
-        );
-        let after_iter = self.parse_expr().ok();
-        self.expect_after(Token::RightParen, "for clauses")?;
+            eprintln!(
+                "got cond {}",
+                condition
+                    .as_ref()
+                    .map(|i| format!("{i}"))
+                    .unwrap_or_default()
+            );
+            let after_iter = s.parse_expr().ok();
+            s.expect_after(Token::RightParen, "for clauses")?;
 
-        eprintln!(
-            "got after iter {}",
-            after_iter
-                .as_ref()
-                .map(|i| format!("{i}"))
-                .unwrap_or_default()
-        );
+            eprintln!(
+                "got after iter {}",
+                after_iter
+                    .as_ref()
+                    .map(|i| format!("{i}"))
+                    .unwrap_or_default()
+            );
 
-        let body = self.parse_stmt()?.into();
+            let body = s.parse_stmt()?.into();
 
-        eprintln!("got body {body}");
+            eprintln!("got body {body}");
 
-        Ok(StmtKind::For {
-            begin,
-            condition,
-            after_iter,
-            body,
-        }
-        .into_ast(line_pos))
+            Ok(StmtKind::For {
+                begin,
+                condition,
+                after_iter,
+                body,
+            }
+            .into_ast(line_pos))
+        })
     }
 
     /// ifStmt         → "if" "(" expression ")" statement
@@ -754,33 +765,67 @@ impl<'src> Parser<'src> {
         Ok(StmtKind::While { condition, body }.into_ast(line_pos))
     }
 
-    /// block          → "{" declaration* "}";
-    fn parse_block(&mut self) -> Result<'src, Block<'src>> {
-        eprintln!("parsing block");
-        let line_pos = self.line_pos();
-        let prev = std::mem::replace(&mut self.defined_vars_in_scope, HashSet::new());
+    // fn with_ast_node<T, R>(&mut self, i: T) -> Result<'src, AstNode<R>>
+    // where
+    //     T: FnOnce(&mut Self) -> Result<'src, R>,
+    // {
+    //     let (line, pos) = (self.line(), self.pos());
+
+    //     let inner = i(&mut self)?;
+
+    //     Ok(inner.into_ast(self))
+    // }
+
+    fn with_inner_bloc<T, R>(
+        &mut self,
+        default_declared_vars: Option<HashSet<&'src str>>,
+        i: T,
+    ) -> Result<'src, R>
+    where
+        T: FnOnce(&mut Self) -> Result<'src, R>,
+    {
+        let prev = std::mem::replace(
+            &mut self.defined_vars_in_scope,
+            default_declared_vars.unwrap_or_else(|| HashSet::new()),
+        );
+        let prev_global_scope = self.is_global_scope;
+        self.is_global_scope = false;
 
         eprintln!("PREV DECLARED VARS {:?}", prev);
         eprintln!("CURR DECLARED VARS {:?}", self.defined_vars_in_scope);
 
-        let mut decls = Vec::new();
-        while !matches!(self.peek(), Some(Token::RightBrace) | None) {
-            match self.parse_decl() {
-                Some(d) => decls.push(d),
-                None => continue,
-            }
-        }
-
-        eprintln!("end of block or file");
-
-        self.expect_after(Token::RightBrace, "block")?;
+        let res = i(self);
 
         self.defined_vars_in_scope = prev;
+        self.is_global_scope = prev_global_scope;
         eprintln!("SET BACK TO PREV {:?}", self.defined_vars_in_scope);
 
-        eprintln!("valid block");
+        res
+    }
 
-        Ok(BlockInner { decls }.into_ast(line_pos))
+    /// block          → "{" declaration* "}";
+    fn parse_block(
+        &mut self,
+        default_declared_vars: Option<HashSet<&'src str>>,
+    ) -> Result<'src, Block<'src>> {
+        let line_pos = self.line_pos();
+        self.with_inner_bloc(default_declared_vars, |s| {
+            let mut decls = Vec::new();
+            while !matches!(s.peek(), Some(Token::RightBrace) | None) {
+                match s.parse_decl() {
+                    Some(d) => decls.push(d),
+                    None => continue,
+                }
+            }
+
+            eprintln!("end of block or file");
+
+            s.expect_after(Token::RightBrace, "block")?;
+
+            eprintln!("valid block");
+
+            Ok(BlockInner { decls }.into_ast(line_pos))
+        })
     }
 
     /// declaration    → funDecl | varDecl | statement;
@@ -814,10 +859,12 @@ impl<'src> Parser<'src> {
     // parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
     fn parse_parameters(&self) -> Result<'src, Vec<&'src str>> {
         let mut params = Vec::new();
+        let mut lookup = HashSet::new();
 
         if let Some(Token::Identifier(p)) = self.peek() {
             self.next().unwrap();
             params.push(p);
+            lookup.insert(p);
         }
 
         eprintln!("got first param {params:?}");
@@ -830,7 +877,13 @@ impl<'src> Parser<'src> {
             };
 
             eprintln!("getting another param {p}");
+            if lookup.contains(&p) {
+                self.prev().unwrap();
+                return self.err(ErrorKind::DuplicateVariable);
+            }
+
             params.push(p);
+            lookup.insert(p);
         }
 
         eprintln!("params done {params:?}");
@@ -854,11 +907,13 @@ impl<'src> Parser<'src> {
 
         self.expect_after(Token::RightParen, "parameters")?;
         self.expect_custom(Token::LeftBrace, "before function body")?;
-        let body = self.parse_block()?;
+        let body = self.parse_block(Some(HashSet::from_iter(params.iter().copied())))?;
 
         eprintln!("parsed block body {body}");
 
         self.defined_vars_in_scope.insert(name);
+
+        let params = params.into_iter().collect();
 
         Ok(DeclKind::Fun { name, params, body }.into_ast(line_pos))
     }
@@ -878,6 +933,13 @@ impl<'src> Parser<'src> {
         let var_decl = match self.next() {
             Some(Token::Equal) => {
                 let value = self.parse_expr()?;
+
+                // We are allowed to redeclare a variable with its own value, but not with another value
+                if self.defined_vars_in_scope.contains(name) && !self.is_global_scope {
+                    self.prev().unwrap();
+                    return self.err(ErrorKind::DuplicateVariable);
+                }
+
                 self.expect_after(Token::Semicolon, "variable declaration")?;
 
                 eprintln!("got decl with value {value}");
@@ -886,10 +948,20 @@ impl<'src> Parser<'src> {
 
                 VarDecl { name, value }
             }
-            Some(Token::Semicolon) => VarDecl { name, value: None },
+            Some(Token::Semicolon) => {
+                self.declaring_var.set(None);
+
+                if self.defined_vars_in_scope.contains(name) {
+                    self.prev().unwrap();
+                    return self.err(ErrorKind::DuplicateVariable);
+                }
+
+                VarDecl { name, value: None }
+            }
             other => {
                 eprintln!("got non equal {other:?}");
                 self.declaring_var.set(None);
+
                 return self.err(ErrorKind::TokenAfter(
                     Token::Semicolon,
                     "variable declaration",
@@ -1141,16 +1213,11 @@ impl<'src> Parser<'src> {
             Some(Token::Keyword(Keyword::Nil)) => Primary::Nil,
             Some(Token::Identifier(i)) => {
                 eprintln!("ACCESSING VAR {i}");
+
                 if let Some(declaring_var) = self.declaring_var.get() {
                     eprintln!(
                         "ALREADY DECLARING VAR {declaring_var} {:?}",
                         self.defined_vars_in_scope
-                    );
-                    eprintln!(
-                        "DECLARED VARS {:?} {i} == {declaring_var} {} {}",
-                        self.defined_vars_in_scope,
-                        !self.defined_vars_in_scope.contains(i),
-                        !self.defined_vars_in_scope.contains(i) && declaring_var == i
                     );
                     if !self.defined_vars_in_scope.contains(i) && declaring_var == i {
                         eprintln!("RETURNING ERR");

@@ -103,23 +103,24 @@ impl<'e> Value<'e> {
 
                 let mut args = args.iter();
 
-                let mut initial_vars = HashMap::new();
+                executor.incr_stack_frame()?;
                 for p in &params[..] {
                     eprintln!("EVALING PARAM {name} {p} {}", executor.stack_ptr.get());
                     let arg = args.next().unwrap();
                     eprintln!("ARG ON LINE {} SETTING TO {pos}", arg.line());
                     let val = executor.eval_expr(arg)?;
-
-                    initial_vars.insert(*p, (*pos, val));
+                    executor.current_stack_frame().insert(p, (*pos, val));
                 }
 
                 // Set `effective_stack_ptr` to ensure that functions can only access variables in the scope they are defined in
                 // And from outer scopes, but not inner ones
-                executor.excluded_stack_range = Some((*stack_ptr, executor.stack_ptr.get() + 1));
+                executor.excluded_stack_range = Some((*stack_ptr, executor.stack_ptr.get()));
 
-                eprintln!("evaling fn body {name} with initial vars {initial_vars:#?}");
-                let ret = match executor.eval_block_inner(*body, Some(initial_vars), false) {
-                    Ok(..) => Primary::Nil.into(),
+                let ret = match executor.eval_block_inner(*body, false) {
+                    Ok(..) => {
+                        executor.decr_stack_frame();
+                        Primary::Nil.into()
+                    }
                     Err(Error {
                         kind: ErrorKind::Return(ret),
                         ..
@@ -130,10 +131,12 @@ impl<'e> Value<'e> {
                             eprintln!("RETURNING CLOSURE {ret:?}");
                             if stack_ptr != executor.stack_ptr.get() {
                                 executor.decr_stack_frame();
+                                executor.decr_stack_frame();
                             }
                             ret
                         }
                         _ => {
+                            executor.decr_stack_frame();
                             executor.decr_stack_frame();
 
                             eprintln!("RETURNING VAL {ret}");
@@ -260,16 +263,13 @@ impl<'e, T: Write> Executor<'e, T> {
         prev
     }
 
-    fn incr_stack_frame(
-        &mut self,
-        vars: Option<HashMap<&'e str, (usize, Value<'e>)>>,
-    ) -> Result<'e, ()> {
+    fn incr_stack_frame(&mut self) -> Result<'e, ()> {
         let curr = self.stack_ptr.get();
         if curr < STACK_SIZE - 1 {
             eprintln!("incring stack frame {}", self.stack_ptr.get());
             self.stack_ptr.set(curr + 1);
 
-            *self.current_stack_frame_inner() = Some(vars.unwrap_or_default());
+            *self.current_stack_frame_inner() = Some(HashMap::new());
 
             Ok(())
         } else {
@@ -405,11 +405,10 @@ impl<'e, T: Write> Executor<'e, T> {
     fn eval_block_inner(
         &mut self,
         decls: impl IntoIterator<Item = &'e Decl<'e>>,
-        vars: Option<HashMap<&'e str, (usize, Value<'e>)>>,
         declr_stack_frame_on_ret: bool,
     ) -> Result<'e, ()> {
         let (p_line, p_pos) = (self.line.get(), self.pos.get());
-        self.incr_stack_frame(vars)?;
+        self.incr_stack_frame()?;
         for decl in decls {
             let res = self.eval_decl(decl);
 
@@ -436,13 +435,10 @@ impl<'e, T: Write> Executor<'e, T> {
         Ok(())
     }
 
-    fn eval_block(
-        &mut self,
-        decls: impl IntoIterator<Item = &'e Decl<'e>>,
-        vars: Option<HashMap<&'e str, (usize, Value<'e>)>>,
-    ) -> Result<'e, ()> {
-        self.eval_block_inner(decls, vars, true)
+    fn eval_block(&mut self, decls: impl IntoIterator<Item = &'e Decl<'e>>) -> Result<'e, ()> {
+        self.eval_block_inner(decls, true)
     }
+
     fn eval_stmt(&mut self, stmt: &'e Stmt<'e>) -> Result<'e, ()> {
         self.set_line(stmt);
         match stmt.kind() {
@@ -455,6 +451,7 @@ impl<'e, T: Write> Executor<'e, T> {
                 after_iter,
                 body,
             } => {
+                self.incr_stack_frame()?;
                 if let Some(begin) = begin {
                     match begin {
                         ForBegin::Expr(e) => {
@@ -473,6 +470,7 @@ impl<'e, T: Write> Executor<'e, T> {
                         self.eval_expr(after_iter)?;
                     }
                 }
+                self.decr_stack_frame();
             }
             StmtKind::If {
                 condition,
@@ -506,7 +504,7 @@ impl<'e, T: Write> Executor<'e, T> {
             }
             StmtKind::Block(b) => {
                 eprintln!("evaling normal block");
-                self.eval_block(b.kind().decls(), None)?
+                self.eval_block(b.kind().decls())?
             }
         };
 
