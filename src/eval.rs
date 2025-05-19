@@ -76,7 +76,6 @@ pub enum Value<'e> {
         name: &'e str,
         params: &'e [&'e str],
         body: &'e [Decl<'e>],
-        closure: Option<HashMap<&'e str, Value<'e>>>,
     },
 }
 
@@ -93,7 +92,6 @@ impl<'e> Value<'e> {
                 name,
                 params,
                 body,
-                closure,
             } => {
                 let got = args.len();
                 let expected = params.len();
@@ -105,47 +103,32 @@ impl<'e> Value<'e> {
 
                 let mut initial_vars = HashMap::new();
                 for p in &params[..] {
+                    eprintln!("EVALING PARAM {p} {}", executor.stack_ptr.get());
                     let arg = args.next().unwrap();
                     let val = executor.eval_expr(arg)?;
 
                     initial_vars.insert(*p, val);
                 }
 
-                executor.closure = closure.as_mut().map(|c| c as *mut _);
                 // Set `effective_stack_ptr` to ensure that functions can only access variables in the scope they are defined in
                 // And from outer scopes, but not inner ones
-                executor.excluded_stack_range = Some((*stack_ptr, executor.stack_ptr.get()+1));
+                executor.excluded_stack_range = Some((*stack_ptr, executor.stack_ptr.get() + 1));
 
-                eprintln!("evaling fn body {name}");
+                eprintln!("evaling fn body {name} with initial vars {initial_vars:#?}");
                 let ret = match executor.eval_block_inner(*body, Some(initial_vars), false) {
                     Ok(..) => Primary::Nil.into(),
                     Err(Error {
                         kind: ErrorKind::Return(ret),
                         ..
                     }) => match ret {
-                        Value::Function {
-                            stack_ptr,
-                            name,
-                            params,
-                            body,
-                            closure,
-                        } => {
-                            let with_closure = Value::Function {
-                                stack_ptr,
-                                name,
-                                params,
-                                body,
-                                closure: Some({
-                                    let mut base = closure.unwrap_or(HashMap::new());
-                                    base.extend(executor.decr_stack_frame());
-
-                                    base
-                                }),
-                            };
-
-                            eprintln!("RETURN CLOSURE {with_closure}");
-
-                            with_closure
+                        // Don't decrement the stack frame.
+                        // This way we 'reserve' it for the closure
+                        Value::Function { stack_ptr, .. } => {
+                            eprintln!("RETURNING CLOSURE {ret:?}");
+                            if stack_ptr != executor.stack_ptr.get() {
+                                executor.decr_stack_frame();
+                            }
+                            ret
                         }
                         _ => {
                             executor.decr_stack_frame();
@@ -206,7 +189,6 @@ pub struct Executor<'e, T> {
     stack_ptr: Cell<usize>,
     line: Cell<usize>,
     excluded_stack_range: Option<(usize, usize)>,
-    closure: Option<*mut HashMap<&'e str, Value<'e>>>,
     stdout: T,
 }
 
@@ -214,6 +196,17 @@ impl<'e> Executor<'e, std::io::Stdout> {
     pub fn with_stdout(program: &'e [Decl<'e>]) -> Self {
         Self::new(program, std::io::stdout())
     }
+}
+
+macro_rules! make_var_resolver {
+    ($s: expr, $getter: tt, $ref: tt, $ident: ident) => {
+        if let Some(i) = $s.find_var_frame($ident) {
+            let v = $s.stack[i].$ref().unwrap().$getter($ident).unwrap();
+            Ok(v)
+        } else {
+            $s.err(ErrorKind::UndefinedVariable($ident))
+        }
+    };
 }
 
 impl<'e, T: Write> Executor<'e, T> {
@@ -242,7 +235,6 @@ impl<'e, T: Write> Executor<'e, T> {
             stack_ptr: 0.into(),
             line: 0.into(),
             excluded_stack_range: None,
-            closure: None,
             stdout,
         }
     }
@@ -292,44 +284,20 @@ impl<'e, T: Write> Executor<'e, T> {
     fn find_var_frame(&self, ident: &str) -> Option<usize> {
         let curr = self.stack_ptr.get();
         let (a, b) = self.excluded_stack_range.unwrap_or((curr, curr));
-        (0..=a)
-            .chain(b..=curr)
-            .rev()
-            .find(|&i| {
-                self.stack[i]
-                    .as_ref()
-                    .and_then(|frame| frame.get(ident))
-                    .is_some()
-            })
+        (0..=a).chain(b..=curr).rev().find(|&i| {
+            self.stack[i]
+                .as_ref()
+                .and_then(|frame| frame.get(ident))
+                .is_some()
+        })
     }
 
     fn resolve_var(&self, ident: &'e str) -> Result<'e, &Value<'e>> {
-        if let Some(i) = self.find_var_frame(ident) {
-            let v = self.stack[i].as_ref().unwrap().get(ident).unwrap();
-            return Ok(v);
-        } else if let Some(c) = self.closure {
-            // SAFETY: the closure is `Some` only inside the `call` method of `Value`
-            // We have a mutable refernce to the closure there, so this is safe.
-            if let Some(v) = unsafe { &*c }.get(ident) {
-                return Ok(v);
-            }
-        }
-        self.err(ErrorKind::UndefinedVariable(ident))
+        make_var_resolver!(self, get, as_ref, ident)
     }
 
     fn resolve_var_mut(&mut self, ident: &'e str) -> Result<'e, &mut Value<'e>> {
-        if let Some(i) = self.find_var_frame(ident) {
-            let v = self.stack[i].as_mut().unwrap().get_mut(ident).unwrap();
-            return Ok(v);
-        } else if let Some(c) = self.closure {
-            // Safety: the closure is `Some` only inside the `call` method of `Value`
-            // We have a mutable refernce to the closure there, so this is safe.
-            if let Some(v) = unsafe { &mut *c }.get_mut(ident) {
-                return Ok(v);
-            }
-        }
-
-        self.err(ErrorKind::UndefinedVariable(ident))
+        make_var_resolver!(self, get_mut, as_mut, ident)
     }
 
     fn print_value(p: Value<'e>) -> String {
@@ -397,7 +365,6 @@ impl<'e, T: Write> Executor<'e, T> {
                         name,
                         params,
                         body: body.kind().decls(),
-                        closure: None,
                     },
                 );
             }
@@ -491,6 +458,7 @@ impl<'e, T: Write> Executor<'e, T> {
             StmtKind::Print(expr) => {
                 let val = self.eval_expr(expr)?;
                 let print = Self::print_value(val);
+                eprintln!("PRINTING {print}");
                 writeln!(self.stdout, "{print}").map_err(|io| self.err_inner(ErrorKind::Io(io)))?;
             }
             StmtKind::Return(ret) => {
@@ -603,10 +571,7 @@ impl<'e, T: Write> Executor<'e, T> {
                     Primary::Number((-self.eval_expr(expr)?.as_num(self)?).into()).into()
                 }
             },
-            ExprKind::Call { callee, args } => {
-                let mut callee = self.eval_expr(callee)?;
-                callee.call(args, self)?
-            }
+            ExprKind::Call { callee, args } => self.eval_expr(callee)?.call(args, self)?,
             ExprKind::Ident(ident) => self.resolve_var(ident)?.clone(),
             ExprKind::Group(i) => self.eval_expr(i)?,
             ExprKind::Primary(p) => p.clone().into(),

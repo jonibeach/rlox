@@ -757,3 +757,75 @@ fn scopes() {
     assert_eq!(lines.next().unwrap(), "2");
     assert!(lines.next().is_none());
 }
+
+#[test]
+fn mutable_closure() {
+    let src = r#"
+        fun makeCounter() {
+        var i = 0;
+        fun count() {
+            i = i + 3;
+            print i;
+        }
+
+        return count;
+        }
+
+        var counter = makeCounter();
+        counter();
+        counter();"#;
+
+    let mut lexer = Lexer::new();
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "3");
+    assert_eq!(lines.next().unwrap(), "6");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn call_fun_returned_from_fn() {
+    let src = r#"
+        fun returnArg(arg) {
+          return arg;
+        }
+    
+        fun returnFunCallWithArg(func, arg) {
+          return returnArg(func)(arg);
+        }
+    
+        fun printArg(arg) {
+          print arg;
+        }
+
+        returnFunCallWithArg(printArg, "foo");
+        "#;
+
+    let mut lexer = Lexer::new();
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "foo");
+    assert!(lines.next().is_none());
+}
