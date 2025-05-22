@@ -1,8 +1,8 @@
 use std::{borrow::Cow, cell::Cell, collections::HashMap, fmt::Display, io::Write};
 
 use crate::parser::{
-    AstNode, CmpOp, Decl, DeclKind, EqOp, Expr, ExprKind, FactorOp, ForBegin, Primary, Stmt,
-    StmtKind, TermOp, UnaryOp, VarDecl,
+    AstNode, CmpOp, Decl, DeclKind, EqOp, Expr, ExprKind, FactorOp, ForBegin, FunDecl, Primary,
+    Stmt, StmtKind, TermOp, UnaryOp, VarDecl,
 };
 
 #[derive(Debug)]
@@ -68,16 +68,28 @@ pub type Result<'e, T> = std::result::Result<T, Error<'e>>;
 const STACK_SIZE: usize = 1 << 12;
 
 #[derive(Debug, Clone)]
+pub struct FunDef<'e> {
+    pos: usize,
+    stack_ptr: usize,
+    name: &'e str,
+    params: &'e [&'e str],
+    body: &'e [Decl<'e>],
+}
+
+#[derive(Debug, Clone)]
+pub struct Class<'e> {
+    name: &'e str,
+    parent: Option<&'e str>,
+    methods: HashMap<&'e str, FunDef<'e>>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Value<'e> {
     Primary(Primary<'e>),
     NativeFunction(fn() -> Value<'e>),
-    Function {
-        pos: usize,
-        stack_ptr: usize,
-        name: &'e str,
-        params: &'e [&'e str],
-        body: &'e [Decl<'e>],
-    },
+    Function(FunDef<'e>),
+    Class(Class<'e>),
+    ClassInstance(Class<'e>, ()),
 }
 
 impl<'e> Value<'e> {
@@ -88,13 +100,13 @@ impl<'e> Value<'e> {
     ) -> Result<'e, Self> {
         match self {
             Self::NativeFunction(f) => Ok(f()),
-            Self::Function {
+            Self::Function(FunDef {
                 pos,
                 stack_ptr,
                 name,
                 params,
                 body,
-            } => {
+            }) => {
                 let got = args.len();
                 let expected = params.len();
                 if got != expected {
@@ -127,7 +139,7 @@ impl<'e> Value<'e> {
                     }) => match ret {
                         // Don't decrement the stack frame.
                         // This way we 'reserve' it for the closure
-                        Value::Function { stack_ptr, .. } => {
+                        Value::Function(FunDef { stack_ptr, .. }) => {
                             eprintln!("RETURNING CLOSURE {ret:?}");
                             if stack_ptr != executor.stack_ptr.get() {
                                 executor.decr_stack_frame();
@@ -150,7 +162,8 @@ impl<'e> Value<'e> {
 
                 Ok(ret)
             }
-            Self::Primary(..) => executor.err(ErrorKind::NotCallable),
+            Self::Class(class) => Ok(Self::ClassInstance(class.clone(), ())),
+            Self::Primary(..) | Self::ClassInstance(..) => executor.err(ErrorKind::NotCallable),
         }
     }
 
@@ -184,7 +197,9 @@ impl Display for Value<'_> {
         match self {
             Self::Primary(p) => p.fmt(f),
             Self::NativeFunction(..) => write!(f, "<native fn>"),
-            Self::Function { name, .. } => write!(f, "<fn {name}>"),
+            Self::Function(FunDef { name, .. }) => write!(f, "<fn {name}>"),
+            Self::Class(Class { name, .. }) => write!(f, "{name}"),
+            Self::ClassInstance(Class { name, .. }, _) => write!(f, "{name} instance"),
         }
     }
 }
@@ -379,21 +394,55 @@ impl<'e, T: Write> Executor<'e, T> {
                 self.eval_stmt(s)?;
             }
             DeclKind::Var(v) => self.eval_var_decl(v)?,
-            DeclKind::Fun { name, params, body } => {
+            DeclKind::Fun(FunDecl { name, params, body }) => {
                 let stack_ptr = self.stack_ptr.get();
                 let pos = self.pos.get();
-                eprintln!("SETTING FN {name} TO {pos} {}", self.line.get());
                 self.current_stack_frame().insert(
                     name,
                     (
                         pos,
-                        Value::Function {
+                        Value::Function(FunDef {
+                            pos,
+                            stack_ptr,
+                            name,
+                            params,
+                            body: body.kind().decls(),
+                        }),
+                    ),
+                );
+            }
+            DeclKind::Class {
+                name,
+                parent,
+                methods: method_decls,
+            } => {
+                let stack_ptr = self.stack_ptr.get();
+                let pos = self.pos.get();
+
+                let mut methods = HashMap::new();
+
+                for FunDecl { name, params, body } in method_decls {
+                    methods.insert(
+                        *name,
+                        FunDef {
                             pos,
                             stack_ptr,
                             name,
                             params,
                             body: body.kind().decls(),
                         },
+                    );
+                }
+
+                self.current_stack_frame().insert(
+                    name,
+                    (
+                        pos,
+                        Value::Class(Class {
+                            name,
+                            parent: *parent,
+                            methods,
+                        }),
                     ),
                 );
             }

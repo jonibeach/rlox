@@ -159,12 +159,31 @@ impl Display for VarDecl<'_> {
 pub type Decl<'src> = AstNode<DeclKind<'src>>;
 
 #[derive(Debug)]
+pub struct FunDecl<'src> {
+    pub(crate) name: &'src str,
+    pub(crate) params: Vec<&'src str>,
+    pub(crate) body: Block<'src>,
+}
+
+impl Display for FunDecl<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { name, params, body } = self;
+        write!(f, "(funDecl {name}")?;
+        for p in params {
+            write!(f, " {p}")?;
+        }
+        write!(f, " {body})")
+    }
+}
+
+#[derive(Debug)]
 pub enum DeclKind<'src> {
-    Fun {
+    Class {
         name: &'src str,
-        params: Vec<&'src str>,
-        body: Block<'src>,
+        parent: Option<&'src str>,
+        methods: Vec<FunDecl<'src>>,
     },
+    Fun(FunDecl<'src>),
     Var(VarDecl<'src>),
     Stmt(Stmt<'src>),
     Expr(Expr<'src>),
@@ -173,14 +192,24 @@ pub enum DeclKind<'src> {
 impl Display for DeclKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Var(v) => write!(f, "{v}"),
-            Self::Fun { name, params, body } => {
-                write!(f, "(funDecl {name}")?;
-                for p in params {
-                    write!(f, " {p}")?;
+            Self::Class {
+                name,
+                parent,
+                methods,
+            } => {
+                write!(f, "(classDecl {name}")?;
+                if let Some(parent) = parent {
+                    write!(f, " < {parent}")?;
                 }
-                write!(f, " {body})")
+
+                write!(f, " (methods")?;
+                for m in methods {
+                    write!(f, " {m}")?;
+                }
+                write!(f, "))")
             }
+            Self::Fun(fun_decl) => write!(f, "{fun_decl}"),
+            Self::Var(v) => write!(f, "{v}"),
             Self::Stmt(s) => write!(f, "{s}"),
             Self::Expr(e) => write!(f, "{e}"),
         }
@@ -375,7 +404,7 @@ impl<'src> Program<'src> {
 
 #[derive(Debug)]
 pub enum ErrorKind<'src> {
-    Custom(&'static str),
+    Custom(String),
     TokenAfter(Token<'src>, &'static str),
     TokenAfterToken(Token<'src>, Token<'src>),
     CantReadLocalVarInOwnInit,
@@ -534,13 +563,17 @@ impl<'src> Parser<'src> {
         None
     }
 
-    fn expect_custom(&self, token: Token<'src>, msg: &'static str) -> Result<'src, Token<'src>> {
+    fn expect_custom(
+        &self,
+        token: Token<'src>,
+        msg: impl Into<String>,
+    ) -> Result<'src, Token<'src>> {
         self.accept(token)
-            .ok_or(self.err_inner(ErrorKind::Custom(msg)))
+            .ok_or(self.err_inner(ErrorKind::Custom(msg.into())))
     }
 
-    fn custom_err<E>(&self, msg: &'static str) -> Result<'src, E> {
-        Err(self.err_inner(ErrorKind::Custom(msg)))
+    fn custom_err<E>(&self, msg: impl Into<String>) -> Result<'src, E> {
+        Err(self.err_inner(ErrorKind::Custom(msg.into())))
     }
 
     fn expect_after_token(&self, token: Token<'src>) -> Result<'src, Token<'src>> {
@@ -837,12 +870,16 @@ impl<'src> Parser<'src> {
         })
     }
 
-    /// declaration    → funDecl | varDecl | statement;
+    /// declaration    → classDecl | funDecl | varDecl | statement;
     fn parse_decl(&mut self) -> Option<Decl<'src>> {
         let line_pos = self.line_pos();
         eprintln!("parsing decl {:?}", self.peek());
         let maybe_decl = match self.next() {
-            Some(Token::Keyword(Keyword::Fun)) => self.parse_fun_decl(),
+            Some(Token::Keyword(Keyword::Class)) => self.parse_class_decl(),
+            Some(Token::Keyword(Keyword::Fun)) => self
+                .parse_fun_decl("function")
+                .map(DeclKind::Fun)
+                .map(|d| d.into_ast(line_pos)),
             Some(Token::Keyword(Keyword::Var)) => self
                 .parse_var_decl()
                 .map(|v| DeclKind::Var(v).into_ast(line_pos)),
@@ -863,6 +900,49 @@ impl<'src> Parser<'src> {
                 None
             }
         }
+    }
+
+    /// "class" IDENTIFIER ( "<" IDENTIFIER )?
+    ///     "{" function* "}" ;
+    fn parse_class_decl(&mut self) -> Result<'src, Decl<'src>> {
+        let line_pos = self.line_pos();
+        let Some(Token::Identifier(name)) = self.next() else {
+            return self.custom_err("class name");
+        };
+
+        let mut parent = None;
+        if let Some(Token::Less) = self.peek() {
+            eprintln!("parsing superclass");
+            parent = match self.next() {
+                Some(Token::Identifier(i)) => Some(i),
+                _ => return self.custom_err("superclass name"),
+            };
+        }
+
+        eprintln!("parsing class body");
+
+        self.expect_custom(Token::LeftBrace, "before class body")?;
+
+        let mut methods = Vec::new();
+
+        while !matches!(self.peek(), Some(Token::RightBrace) | None) {
+            eprintln!("parsing class method {:?}", self.peek());
+            self.next().unwrap();
+            methods.push(self.parse_fun_decl("method")?)
+        }
+
+        eprintln!("parsed methods");
+
+        self.expect_custom(Token::RightBrace, "after class body")?;
+        
+        eprintln!("valid class");
+
+        Ok(DeclKind::Class {
+            name,
+            parent,
+            methods,
+        }
+        .into_ast(line_pos))
     }
 
     // parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
@@ -902,10 +982,9 @@ impl<'src> Parser<'src> {
 
     /// funDecl        → "fun" function ;
     /// function       → IDENTIFIER "(" parameters? ")" block ;
-    fn parse_fun_decl(&mut self) -> Result<'src, Decl<'src>> {
-        let line_pos = self.line_pos();
+    fn parse_fun_decl(&mut self, name: &'static str) -> Result<'src, FunDecl<'src>> {
         let Some(Token::Identifier(name)) = self.next() else {
-            return self.custom_err("function name");
+            return self.custom_err(format!("{name} name"));
         };
 
         self.expect_after(Token::LeftParen, "function name")?;
@@ -926,7 +1005,7 @@ impl<'src> Parser<'src> {
 
         let params = params.into_iter().collect();
 
-        Ok(DeclKind::Fun { name, params, body }.into_ast(line_pos))
+        Ok(FunDecl { name, params, body })
     }
 
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;

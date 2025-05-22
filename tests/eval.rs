@@ -993,3 +993,31 @@ fn foor_loop_variable_mutations() {
     assert_eq!(lines.next().unwrap(), "0");
     assert!(lines.next().is_none());
 }
+
+#[test]
+fn basic_class_decl_and_instantiation() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        class Rust {}
+        var new = Rust();
+        print Rust;
+        print new;
+    "#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "Rust");
+    assert_eq!(lines.next().unwrap(), "Rust instance");
+    assert!(lines.next().is_none());
+}
