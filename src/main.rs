@@ -62,14 +62,17 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let mut executor = Executor::with_stdout(program.decls());
-            match executor.eval() {
+            let executor = Executor::with_stdout(program.decls());
+            let res = executor.eval();
+            match res {
                 Ok(res) => println!("{}", res),
                 Err(e) => {
                     eprintln!("{e}");
+                    drop(e);
                     std::process::exit(70)
                 }
-            }
+            };
+
         }
         "run" => {
             if !lexer.errors().is_empty() {
@@ -81,7 +84,7 @@ fn main() {
                 Ok(program) => program,
                 Err(..) => std::process::exit(65),
             };
-            let mut executor = Executor::with_stdout(program.decls());
+            let executor = Executor::with_stdout(program.decls());
             match executor.run() {
                 Ok(..) => {}
                 Err(e) => {

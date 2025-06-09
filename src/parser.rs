@@ -96,7 +96,6 @@ pub enum Primary<'src> {
     Nil,
     Number(Number),
     String(Cow<'src, str>),
-    This,
 }
 
 impl Display for Primary<'_> {
@@ -106,7 +105,6 @@ impl Display for Primary<'_> {
             Self::Nil => f.write_str("nil"),
             Self::Number(n) => write!(f, "{n}"),
             Self::String(s) => write!(f, "{s}"),
-            Self::This => f.write_str("this"),
         }
     }
 }
@@ -309,7 +307,11 @@ impl Display for StmtKind<'_> {
 pub type Expr<'src> = AstNode<ExprKind<'src>>;
 #[derive(Debug)]
 pub enum ExprKind<'src> {
-    Assign(&'src str, Box<Expr<'src>>),
+    Assign {
+        call: Option<Box<Expr<'src>>>,
+        ident: &'src str,
+        val: Box<Expr<'src>>,
+    },
     Or(Box<Expr<'src>>, Box<Expr<'src>>),
     And(Box<Expr<'src>>, Box<Expr<'src>>),
     Eq(Box<Expr<'src>>, EqOp, Box<Expr<'src>>),
@@ -321,15 +323,26 @@ pub enum ExprKind<'src> {
         callee: Box<Expr<'src>>,
         args: Vec<Expr<'src>>,
     },
+    Access(Box<Expr<'src>>, &'src str),
     Group(Box<Expr<'src>>),
     Ident(&'src str),
+    This,
+    Super(&'src str),
     Primary(Primary<'src>),
 }
 
 impl Display for ExprKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Assign(ident, val) => write!(f, "(assign {ident} {val})"),
+            Self::Assign { call, ident, val } => {
+                write!(f, "(assign ")?;
+
+                if let Some(call) = call {
+                    write!(f, "(access {call} {ident}) {val})")
+                } else {
+                    write!(f, "{ident} {val})")
+                }
+            }
             Self::Or(a, b) => write!(f, "(or {a} {b})"),
             Self::And(a, b) => write!(f, "(and {a} {b})"),
             Self::Eq(a, op, b) => write!(f, "({op} {a} {b})"),
@@ -344,8 +357,11 @@ impl Display for ExprKind<'_> {
                 }
                 write!(f, ")")
             }
+            Self::Access(l, r) => write!(f, "(access {l} {r})"),
             Self::Group(g) => write!(f, "(group {g})"),
             Self::Ident(i) => write!(f, "(ident {i})"),
+            Self::This => f.write_str("this"),
+            Self::Super(p) => write!(f, "super.{p}"),
             Self::Primary(p) => write!(f, "{p}"),
         }
     }
@@ -410,6 +426,7 @@ pub enum ErrorKind<'src> {
     CantReadLocalVarInOwnInit,
     DuplicateVariable,
     InvalidReturn,
+    InvalidAssignmentTarget,
 }
 
 impl Display for ErrorKind<'_> {
@@ -427,6 +444,7 @@ impl Display for ErrorKind<'_> {
                 f.write_str("Already a variable with this name in this scope")
             }
             Self::InvalidReturn => f.write_str("Can't return from top-level code."),
+            Self::InvalidAssignmentTarget => f.write_str("Invalid assignment target."),
         }
     }
 }
@@ -833,14 +851,10 @@ impl<'src> Parser<'src> {
         let prev_global_scope = self.is_global_scope;
         self.is_global_scope = false;
 
-        eprintln!("PREV DECLARED VARS {:?}", prev);
-        eprintln!("CURR DECLARED VARS {:?}", self.defined_vars_in_scope);
-
         let res = i(self);
 
         self.defined_vars_in_scope = prev;
         self.is_global_scope = prev_global_scope;
-        eprintln!("SET BACK TO PREV {:?}", self.defined_vars_in_scope);
 
         res
     }
@@ -934,7 +948,7 @@ impl<'src> Parser<'src> {
         eprintln!("parsed methods");
 
         self.expect_custom(Token::RightBrace, "after class body")?;
-        
+
         eprintln!("valid class");
 
         Ok(DeclKind::Class {
@@ -1065,10 +1079,35 @@ impl<'src> Parser<'src> {
         Ok(var_decl)
     }
 
-    /// expression     → logic_or ;
+    /// expression     → assignment ;
+
+    /// assignment     → ( call "." )? IDENTIFIER "=" assignment
+    ///                | logic_or ;
     fn parse_expr(&self) -> Result<'src, Expr<'src>> {
         eprintln!("parsing expr");
-        self.parse_logic_or()
+
+        let or_or_setter = self.parse_logic_or()?;
+
+        if self.accept(Token::Equal).is_some() {
+            let val = self.parse_expr()?.into();
+            let assignment = match or_or_setter.kind {
+                ExprKind::Ident(ident) => ExprKind::Assign {
+                    call: None,
+                    ident,
+                    val,
+                },
+                ExprKind::Access(call, ident) => ExprKind::Assign {
+                    call: Some(call),
+                    ident,
+                    val,
+                },
+                _ => return self.err(ErrorKind::InvalidAssignmentTarget),
+            };
+
+            Ok(assignment.into_ast(self.line_pos()))
+        } else {
+            Ok(or_or_setter)
+        }
     }
 
     // logic_or       → logic_and ( "or" logic_and )* ;
@@ -1250,26 +1289,41 @@ impl<'src> Parser<'src> {
         Ok(args)
     }
 
-    /// call           → primary ( "(" arguments? ")" )* ;
+    /// call           → primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
     fn parse_call(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
         let mut call = self.parse_primary()?;
 
         eprintln!("maybe parsing call {call}");
 
-        while self.accept(Token::LeftParen).is_some() {
-            eprintln!("parsing call");
-            let args = self.parse_arguments()?;
-            eprintln!("args {args:?} {:?}", self.peek());
-            self.expect_after(Token::RightParen, "arguments")?;
+        while let Some(next) = self.accept(Token::LeftParen).or(self.accept(Token::Dot)) {
+            let next = match next {
+                Token::Dot => {
+                    eprintln!("Parsing access");
+                    let Some(Token::Identifier(ident)) = self.next() else {
+                        return self.custom_err("property name after '.'");
+                    };
 
-            eprintln!("valid call");
+                    eprintln!("Parsed access .{ident}");
 
-            call = ExprKind::Call {
-                callee: call.into(),
-                args,
-            }
-            .into_ast(line_pos);
+                    ExprKind::Access(call.into(), ident)
+                }
+                Token::LeftParen => {
+                    eprintln!("parsing call");
+                    let args = self.parse_arguments()?;
+                    eprintln!("args {args:?} {:?}", self.peek());
+                    self.expect_after(Token::RightParen, "arguments")?;
+
+                    eprintln!("valid call");
+                    ExprKind::Call {
+                        callee: call.into(),
+                        args,
+                    }
+                }
+                other => unreachable!("{other}"),
+            };
+
+            call = next.into_ast(line_pos)
         }
 
         Ok(call)
@@ -1315,16 +1369,7 @@ impl<'src> Parser<'src> {
                         return self.err(ErrorKind::CantReadLocalVarInOwnInit);
                     }
                 }
-
-                eprintln!("GOT IDENT {:?}", self.peek());
-                if let Some(Token::Equal) = self.peek() {
-                    self.next().unwrap();
-                    let inner = self.parse_expr()?;
-
-                    return Ok(ExprKind::Assign(i, inner.into()).into_ast(line_pos));
-                } else {
-                    return Ok(ExprKind::Ident(i).into_ast(line_pos));
-                }
+                return Ok(ExprKind::Ident(i).into_ast(line_pos));
             }
             Some(Token::LeftParen) => {
                 return self.parse_group();

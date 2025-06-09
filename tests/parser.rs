@@ -362,3 +362,36 @@ fn nested_reference_to_current_var_in_init() {
         "[line 16] Error at 'b': Can't read local variable in its own initializer."
     );
 }
+
+#[test]
+fn class_prop_assign() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        class Test {}
+        var x = Test();
+        x.name.value = "name";
+        print x.name.value;
+    "#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut decls = program.decls().iter();
+
+    assert_eq!(format!("{}", decls.next().unwrap()), "(classDecl Test (methods))");
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(varDecl x (call (ident Test)))"
+    );
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(assign (access (access (ident x) name) value) name)"
+    );
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(print (access (access (ident x) name) value))"
+    );
+}

@@ -22,7 +22,7 @@ fn bool() {
         format!("{}", program.decls().iter().next().unwrap()),
         "true"
     );
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "true")
@@ -36,7 +36,7 @@ fn nil() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "nil")
@@ -50,7 +50,7 @@ fn unarys() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "true")
@@ -64,7 +64,7 @@ fn numbers() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "91")
@@ -78,7 +78,7 @@ fn neg_number() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "-2")
@@ -92,7 +92,7 @@ fn neg_numbers_2() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "-89")
@@ -106,7 +106,7 @@ fn string_concat() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "hellohello")
@@ -120,7 +120,7 @@ fn string_concat_groups() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
 
     assert_eq!(res, "quzbazquzbar")
@@ -134,7 +134,7 @@ fn unary_expected_num() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let err = executor.eval().unwrap_err();
 
     assert!(matches!(err.kind(), ErrorKind::MustBeNumber))
@@ -149,7 +149,7 @@ fn expect_both_nums_or_strings() {
 
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-    let mut executor = Executor::with_stdout(program.decls());
+    let executor = Executor::with_stdout(program.decls());
     let err = executor.eval().unwrap_err();
 
     assert_eq!(err.line(), 1);
@@ -181,7 +181,7 @@ fn print() {
     );
 
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -212,7 +212,7 @@ fn multiline_with_not_ascii() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -263,7 +263,7 @@ fn basic_vars() {
     );
 
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -290,7 +290,7 @@ fn basic_string_vars() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -332,7 +332,7 @@ fn basic_var_reassignment() {
     assert_eq!(format!("{}", blocks.next().unwrap()), "(print (ident baz))");
 
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -358,7 +358,7 @@ fn multi_variable_assignment() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -383,7 +383,7 @@ fn basic_if() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -411,7 +411,7 @@ fn many_ors() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -438,7 +438,7 @@ fn for_loop() {
     let program = parser.parse().unwrap();
 
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -461,8 +461,10 @@ fn clock() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
+    eprintln!("PROGRAM: {program:?}");
+
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -497,7 +499,7 @@ fn basic_fn() {
     assert_eq!(format!("{}", decls.next().unwrap()), "(call (ident baz))");
 
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -531,7 +533,7 @@ fn basic_fn_with_args() {
     );
 
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -564,7 +566,7 @@ fn basic_fn_with_early_return() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     eprintln!("{:?}", executor.run());
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -599,7 +601,7 @@ fn fib() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     eprintln!("{:?}", executor.run());
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -609,6 +611,48 @@ fn fib() {
     assert_eq!(lines.next().unwrap(), "55");
     assert_eq!(lines.next().unwrap(), "6765");
     assert!(lines.next().unwrap().parse::<f64>().is_ok());
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn fib2() {
+    let mut lexer = Lexer::new();
+    let src = "
+        var n = 10;
+        var fm = 0;
+        var fn = 1;
+        var index = 0;
+
+        while (index < n) {
+            print fm;
+            var temp = fm;
+            fm = fn;
+            fn = temp + fn;
+            index = index + 1;
+        }
+    ";
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(program.decls(), &mut stdout);
+    eprintln!("{:?}", executor.run());
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next().unwrap(), "0");
+    assert_eq!(lines.next().unwrap(), "1");
+    assert_eq!(lines.next().unwrap(), "1");
+    assert_eq!(lines.next().unwrap(), "2");
+    assert_eq!(lines.next().unwrap(), "3");
+    assert_eq!(lines.next().unwrap(), "5");
+    assert_eq!(lines.next().unwrap(), "8");
+    assert_eq!(lines.next().unwrap(), "13");
+    assert_eq!(lines.next().unwrap(), "21");
+    assert_eq!(lines.next().unwrap(), "34");
     assert!(lines.next().is_none());
 }
 
@@ -655,11 +699,13 @@ fn higher_ord_fun() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
     let mut lines = stdout.lines();
+
+    eprintln!("STDOUT: {stdout:?}");
     assert_eq!(lines.next().unwrap(), "Numbers >= 2:");
     for i in 2..5 {
         assert_eq!(lines.next().unwrap(), i.to_string());
@@ -725,7 +771,7 @@ fn scopes() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -778,7 +824,7 @@ fn mutable_closure() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -815,7 +861,7 @@ fn call_fun_returned_from_fn() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -853,7 +899,7 @@ fn local_var_after_fn_decl_should_not_affect() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -898,7 +944,7 @@ fn reassign_parameter() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -936,7 +982,7 @@ fn timer() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -981,7 +1027,7 @@ fn foor_loop_variable_mutations() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -1011,7 +1057,7 @@ fn basic_class_decl_and_instantiation() {
     let mut parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let mut stdout: Vec<u8> = Vec::new();
-    let mut executor = Executor::new(program.decls(), &mut stdout);
+    let executor = Executor::new(program.decls(), &mut stdout);
     executor.run().unwrap();
 
     let stdout = String::from_utf8(stdout).unwrap();
@@ -1019,5 +1065,40 @@ fn basic_class_decl_and_instantiation() {
 
     assert_eq!(lines.next().unwrap(), "Rust");
     assert_eq!(lines.next().unwrap(), "Rust instance");
+    assert!(lines.next().is_none());
+}
+
+#[test]
+fn basic_class_properties() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        class Spaceship {}
+        var falcon = Spaceship();
+
+        // Setting properties on an instance should work
+        falcon.name = "Millennium Falcon";
+        falcon.speed = 75.5;
+
+        // Getting properties on an instance should work
+        print "Ship details:";
+        print falcon.name;
+        print falcon.speed;"#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut stdout: Vec<u8> = Vec::new();
+    let executor = Executor::new(program.decls(), &mut stdout);
+    executor.run().unwrap();
+
+    let stdout = String::from_utf8(stdout).unwrap();
+    let mut lines = stdout.lines();
+
+    assert_eq!(lines.next().unwrap(), "Ship details:");
+    assert_eq!(lines.next().unwrap(), "Millennium Falcon");
+    assert_eq!(lines.next().unwrap(), "75.5");
     assert!(lines.next().is_none());
 }
