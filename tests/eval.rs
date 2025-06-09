@@ -4,6 +4,32 @@ use codecrafters_interpreter::{
     parser::Parser,
 };
 
+macro_rules! assert_program_stdout {
+    ($program: literal, $($stdout_line: expr),*) => {
+        let mut lexer = Lexer::new();
+        let src = $program;
+
+        lexer.lex(src);
+
+        assert_eq!(lexer.errors(), [].as_slice());
+
+        let mut parser = Parser::new(lexer.tokens());
+        let program = parser.parse().unwrap();
+        let mut stdout: Vec<u8> = Vec::new();
+        let executor = Executor::new(program.decls(), &mut stdout);
+        executor.run().unwrap();
+
+        let stdout = String::from_utf8(stdout).unwrap();
+        let mut lines = stdout.lines();
+
+        $(
+         assert_eq!(lines.next().unwrap().trim(), $stdout_line);
+        )*
+
+        assert!(lines.next().is_none());
+    };
+}
+
 #[test]
 fn bool() {
     let mut lexer = Lexer::new();
@@ -158,40 +184,17 @@ fn expect_both_nums_or_strings() {
 
 #[test]
 fn print() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {
+        r#"
         // lol comment here
-        print 123.44;"#;
-
-    lexer.lex(src);
-    assert_eq!(
-        lexer.without_symbols(),
-        vec![
-            Token::Keyword(Keyword::Print),
-            Token::Number(123.44.into(), "123.44"),
-            Token::Semicolon
-        ]
-    );
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    assert_eq!(
-        format!("{}", program.decls().iter().next().unwrap()),
-        "(print 123.44)"
-    );
-
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    assert_eq!(stdout.lines().next().unwrap(), "123.44");
+        print 123.44;"#,
+        "123.44"
+    }
 }
 
 #[test]
 fn multiline_with_not_ascii() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
     // This program prints the result of a comparison operation
     // It also tests multi-line strings and non-ASCII characters
     print false != false;
@@ -205,249 +208,102 @@ fn multiline_with_not_ascii() {
 
     print "(" + "" + ")";
 
-    print "non-ascii: ॐ";"#;
-
-    lexer.lex(src);
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "false");
-    assert_eq!(lines.next().unwrap(), "53");
-    assert_eq!(lines.next().unwrap().trim(), "17");
-    assert_eq!(lines.next().unwrap().trim(), "98");
-    assert_eq!(lines.next().unwrap().trim(), "");
-    assert_eq!(
-        lines.next().unwrap(),
-        "There should be an empty line above this."
-    );
-    assert_eq!(lines.next().unwrap(), "()");
-    assert_eq!(lines.next().unwrap(), "non-ascii: ॐ");
-    assert!(lines.next().is_none());
+    print "non-ascii: ॐ";"#,
+    "false", "53", "17", "98", "", "There should be an empty line above this.", "()", "non-ascii: ॐ"
+    }
 }
 
 #[test]
 fn basic_vars() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
     var test = "abc";
 
     print test;
     print test + test;
-    print test + "___" + test;"#;
-
-    lexer.lex(src);
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut blocks = program.decls().iter();
-
-    assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl test abc)");
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(print (ident test))"
-    );
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(print (+ (ident test) (ident test)))"
-    );
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(print (+ (+ (ident test) ___) (ident test)))"
-    );
-
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "abc");
-    assert_eq!(lines.next().unwrap(), "abcabc");
-    assert_eq!(lines.next().unwrap().trim(), "abc___abc");
-    assert!(lines.next().is_none());
+    print test + "___" + test;"#,
+    "abc",
+    "abcabc",
+    "abc___abc"
+    }
 }
 
 #[test]
 fn basic_string_vars() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         var baz = 82;
         var world = 82;
         print baz + world;
         var quz = 82;
-        print baz + world + quz;"#;
-
-    lexer.lex(src);
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), (82 * 2).to_string());
-    assert_eq!(lines.next().unwrap(), (82 * 3).to_string());
-    assert!(lines.next().is_none());
+        print baz + world + quz;"#,
+        (82 * 2).to_string().as_str(),
+        (82 * 3).to_string().as_str()
+    }
 }
 
 #[test]
 fn basic_var_reassignment() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {
+        r#"
         var baz = 82;
         print baz;
         baz = baz * 2;
         print baz;
         baz = baz * 2;
-        print baz;"#;
-
-    lexer.lex(src);
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut blocks = program.decls().iter();
-
-    assert_eq!(format!("{}", blocks.next().unwrap()), "(varDecl baz 82.0)");
-    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (ident baz))");
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(assign baz (* (ident baz) 2.0))"
-    );
-    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (ident baz))");
-    assert_eq!(
-        format!("{}", blocks.next().unwrap()),
-        "(assign baz (* (ident baz) 2.0))"
-    );
-    assert_eq!(format!("{}", blocks.next().unwrap()), "(print (ident baz))");
-
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), 82.to_string());
-    assert_eq!(lines.next().unwrap(), (82 * 2).to_string());
-    assert_eq!(lines.next().unwrap(), (82 * 4).to_string());
-    assert!(lines.next().is_none());
+        print baz;"#,
+        82.to_string().as_str(),
+        (82 * 2).to_string().as_str(),
+        (82 * 4).to_string().as_str()
+    }
 }
 
 #[test]
 fn multi_variable_assignment() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         var a;
         var b = 2;
         var a = b = 1;
-        print a;"#;
-
-    lexer.lex(src);
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "1");
-    assert!(lines.next().is_none());
+        print a;"#,
+        "1"
+    }
 }
 
 #[test]
 fn basic_if() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         var a = false;
         if (a = true) {
           print (a == true);
-        }
-    "#;
-
-    lexer.lex(src);
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "true");
-    assert!(lines.next().is_none());
+        }"#,
+        "true"
+    }
 }
 
 #[test]
 fn many_ors() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         print 66 or true;
         print false or 66;
         print false or false or true;
 
         print false or false;
         print false or false or false;
-        print false or false or false or false;
-    "#;
-
-    lexer.lex(src);
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "66");
-    assert_eq!(lines.next().unwrap(), "66");
-    assert_eq!(lines.next().unwrap(), "true");
-    assert_eq!(lines.next().unwrap(), "false");
-    assert_eq!(lines.next().unwrap(), "false");
-    assert_eq!(lines.next().unwrap(), "false");
-    assert!(lines.next().is_none());
+        print false or false or false or false;"#,
+        "66",
+        "66",
+        "true",
+        "false",
+        "false",
+        "false"
+    }
 }
 
 #[test]
 fn for_loop() {
-    let mut lexer = Lexer::new();
-    let src = "for (var foo = 0; foo < 3;) print foo = foo + 1;";
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "1");
-    assert_eq!(lines.next().unwrap(), "2");
-    assert_eq!(lines.next().unwrap(), "3");
-    assert!(lines.next().is_none());
+    assert_program_stdout! {"for (var foo = 0; foo < 3;) print foo = foo + 1;",
+        "1",
+        "2",
+        "3"
+    }
 }
 
 #[test]
@@ -479,74 +335,28 @@ fn clock() {
 
 #[test]
 fn basic_fn() {
-    let mut lexer = Lexer::new();
-    let src = "
+    assert_program_stdout! {r#"
         fun baz() { print 97; }
         baz();
-    ";
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut decls = program.decls().iter();
-
-    assert_eq!(
-        format!("{}", decls.next().unwrap()),
-        "(funDecl baz (block (print 97.0)))"
-    );
-    assert_eq!(format!("{}", decls.next().unwrap()), "(call (ident baz))");
-
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-    assert_eq!(lines.next().unwrap(), "97");
-    assert!(lines.next().is_none());
+    "#,
+    "97"
+    }
 }
 
 #[test]
 fn basic_fn_with_args() {
-    let mut lexer = Lexer::new();
-    let src = "
+    assert_program_stdout! {r#"
         fun f1(a) { print a; }
         f1(49);
-    ";
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut decls = program.decls().iter();
-
-    assert_eq!(
-        format!("{}", decls.next().unwrap()),
-        "(funDecl f1 a (block (print (ident a))))"
-    );
-    assert_eq!(
-        format!("{}", decls.next().unwrap()),
-        "(call (ident f1) 49.0)"
-    );
-
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-    assert_eq!(lines.next().unwrap(), "49");
-    assert!(lines.next().is_none());
+    "#,
+    "49"
+    }
 }
 
 #[test]
 fn basic_fn_with_early_return() {
-    let mut lexer = Lexer::new();
-    let src = "
-        fun return_gte(a, b) { 
+    assert_program_stdout! {r#"
+        fun return_gte(a, b) {
             if (a >= b) {
                 return a;
             } else {
@@ -558,24 +368,12 @@ fn basic_fn_with_early_return() {
         print return_gte(133, 20);
         print return_gte(-12, 20);
         print return_gte(10*34, 20);
-    ";
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    eprintln!("{:?}", executor.run());
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-    assert_eq!(lines.next().unwrap(), "20");
-    assert_eq!(lines.next().unwrap(), "133");
-    assert_eq!(lines.next().unwrap(), "20");
-    assert_eq!(lines.next().unwrap(), "340");
-    assert!(lines.next().is_none());
+    "#,
+    "20",
+    "133",
+    "20",
+    "340"
+    }
 }
 
 #[test]
@@ -616,8 +414,7 @@ fn fib() {
 
 #[test]
 fn fib2() {
-    let mut lexer = Lexer::new();
-    let src = "
+    assert_program_stdout! {r#"
         var n = 10;
         var fm = 0;
         var fn = 1;
@@ -630,36 +427,23 @@ fn fib2() {
             fn = temp + fn;
             index = index + 1;
         }
-    ";
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    eprintln!("{:?}", executor.run());
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-    assert_eq!(lines.next().unwrap(), "0");
-    assert_eq!(lines.next().unwrap(), "1");
-    assert_eq!(lines.next().unwrap(), "1");
-    assert_eq!(lines.next().unwrap(), "2");
-    assert_eq!(lines.next().unwrap(), "3");
-    assert_eq!(lines.next().unwrap(), "5");
-    assert_eq!(lines.next().unwrap(), "8");
-    assert_eq!(lines.next().unwrap(), "13");
-    assert_eq!(lines.next().unwrap(), "21");
-    assert_eq!(lines.next().unwrap(), "34");
-    assert!(lines.next().is_none());
+    "#,
+    "0",
+    "1",
+    "1",
+    "2",
+    "3",
+    "5",
+    "8",
+    "13",
+    "21",
+    "34"
+    }
 }
 
 #[test]
 fn higher_ord_fun() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         fun makeFilter(min) {
           fun filter(n) {
             if (n < min) {
@@ -690,34 +474,19 @@ fn higher_ord_fun() {
 
         print "Numbers >= 4:";
         applyToNumbers(greaterThanY, 5);
-    "#;
-
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    eprintln!("STDOUT: {stdout:?}");
-    assert_eq!(lines.next().unwrap(), "Numbers >= 2:");
-    for i in 2..5 {
-        assert_eq!(lines.next().unwrap(), i.to_string());
+    "#,
+    "Numbers >= 2:",
+    "2",
+    "3",
+    "4",
+    "Numbers >= 4:",
+    "4"
     }
-    assert_eq!(lines.next().unwrap(), "Numbers >= 4:");
-    assert_eq!(lines.next().unwrap(), "4");
-    assert!(lines.next().is_none());
 }
 
 #[test]
 fn scopes() {
-    let src = r#"
+    assert_program_stdout! {r#"
         var x = 1;
         var y = 2;
 
@@ -732,7 +501,7 @@ fn scopes() {
                 print y;
             }
         }
- 
+
         {
             var x = 10;
             {
@@ -761,47 +530,21 @@ fn scopes() {
             print "Globals unchanged:";
             printBoth();
         }
-    "#;
-
-    let mut lexer = Lexer::new();
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-    // let (mut x, mut y) = (10, 20);
-    // let mut i = 0;
-    // while i < 3 {
-    //     x += 1;
-    //     y -= 1;
-    //     assert_eq!(lines.next().unwrap(), "Local x: ");
-    //     assert_eq!(lines.next().unwrap(), x.to_string());
-    //     assert_eq!(lines.next().unwrap(), "Local y: ");
-    //     assert_eq!(lines.next().unwrap(), y.to_string());
-    //     i += 1;
-    // }
-
-    assert_eq!(lines.next().unwrap(), "x is less than y:");
-    assert_eq!(lines.next().unwrap(), "1");
-    assert_eq!(lines.next().unwrap(), "2");
-
-    assert_eq!(lines.next().unwrap(), "Globals unchanged:");
-    assert_eq!(lines.next().unwrap(), "x is less than y:");
-    assert_eq!(lines.next().unwrap(), "1");
-    assert_eq!(lines.next().unwrap(), "2");
-    assert!(lines.next().is_none());
+    "#,
+    "x is less than y:",
+    "1",
+    "2",
+    "Globals unchanged:",
+    "x is less than y:",
+    "1",
+    "2"
+    }
 }
+
 
 #[test]
 fn mutable_closure() {
-    let src = r#"
+    assert_program_stdout! {r#"
         fun makeCounter() {
         var i = 0;
         fun count() {
@@ -814,66 +557,36 @@ fn mutable_closure() {
 
         var counter = makeCounter();
         counter();
-        counter();"#;
-
-    let mut lexer = Lexer::new();
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "3");
-    assert_eq!(lines.next().unwrap(), "6");
-    assert!(lines.next().is_none());
+        counter();"#,
+    "3",
+    "6"
+    }
 }
 
 #[test]
 fn call_fun_returned_from_fn() {
-    let src = r#"
+    assert_program_stdout! {r#"
         fun returnArg(arg) {
           return arg;
         }
-    
+
         fun returnFunCallWithArg(func, arg) {
           return returnArg(func)(arg);
         }
-    
+
         fun printArg(arg) {
           print arg;
         }
 
         returnFunCallWithArg(printArg, "foo");
-        "#;
-
-    let mut lexer = Lexer::new();
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "foo");
-    assert!(lines.next().is_none());
+        "#,
+    "foo"
+    }
 }
 
 #[test]
 fn local_var_after_fn_decl_should_not_affect() {
-    let src = r#"
+    assert_program_stdout! {r#"
         var variable = "global";
 
         {
@@ -888,31 +601,15 @@ fn local_var_after_fn_decl_should_not_affect() {
           var variable = "local";
 
           f(); // this should still print "global"
-        }
-        "#;
-
-    let mut lexer = Lexer::new();
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "global");
-    assert_eq!(lines.next().unwrap(), "global");
-    assert!(lines.next().is_none());
+        }"#,
+    "global",
+    "global"
+    }
 }
 
 #[test]
 fn reassign_parameter() {
-    let src = r#"
+    assert_program_stdout! {r#"
         fun square(x) {
           return x * x;
         }
@@ -933,27 +630,12 @@ fn reassign_parameter() {
         // 5 is squared twice
         print applyTimesN(2, square, 5);
         // 5 is squared thrice
-        print applyTimesN(3, square, 5);    
-    "#;
-
-    let mut lexer = Lexer::new();
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "25");
-    assert_eq!(lines.next().unwrap(), "625");
-    assert_eq!(lines.next().unwrap(), "390625");
-    assert!(lines.next().is_none());
+        print applyTimesN(3, square, 5);
+    "#,
+    "25",
+    "625",
+    "390625"
+    }
 }
 
 #[test]
@@ -995,8 +677,7 @@ fn timer() {
 
 #[test]
 fn foor_loop_variable_mutations() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         var baz = "after";
         {
           var baz = "before";
@@ -1018,60 +699,30 @@ fn foor_loop_variable_mutations() {
             print baz;
           }
         }
-    "#;
-
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "0");
-    assert_eq!(lines.next().unwrap(), "-1");
-    assert_eq!(lines.next().unwrap(), "after");
-    assert_eq!(lines.next().unwrap(), "0");
-    assert!(lines.next().is_none());
+    "#,
+    "0",
+    "-1",
+    "after",
+    "0"
+    }
 }
 
 #[test]
 fn basic_class_decl_and_instantiation() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         class Rust {}
         var new = Rust();
         print Rust;
         print new;
-    "#;
-
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "Rust");
-    assert_eq!(lines.next().unwrap(), "Rust instance");
-    assert!(lines.next().is_none());
+    "#,
+    "Rust",
+    "Rust instance"
+    }
 }
 
 #[test]
 fn basic_class_properties() {
-    let mut lexer = Lexer::new();
-    let src = r#"
+    assert_program_stdout! {r#"
         class Spaceship {}
         var falcon = Spaceship();
 
@@ -1082,23 +733,87 @@ fn basic_class_properties() {
         // Getting properties on an instance should work
         print "Ship details:";
         print falcon.name;
-        print falcon.speed;"#;
+        print falcon.speed;"#,
+    "Ship details:",
+    "Millennium Falcon",
+    "75.5"
+    }
+}
 
-    lexer.lex(src);
+#[test]
+fn basic_class_methods() {
+    assert_program_stdout! {r#"
+        class Wizard {
+          castSpell(spell) {
+            // Methods should be able to accept a parameter
+            print "Casting a magical spell: " + spell;
+          }
+        }
 
-    assert_eq!(lexer.errors(), [].as_slice());
+        class Dragon {
+          // Methods should be able to accept multiple
+          // parameters
+          breatheFire(fire, intensity) {
+            print "Breathing " + fire + " with intensity: "
+            + intensity;
+          }
+        }
 
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
+        var merlin = Wizard();
+        var smaug = Dragon();
 
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
+        if (false) {
+          var action = merlin.castSpell;
+          action("Fireball");
+        } else {
+          var action = smaug.breatheFire;
+          action("Fire", "100");
+        }"#,
+    "Breathing Fire with intensity: 100"
+    }
+}
 
-    assert_eq!(lines.next().unwrap(), "Ship details:");
-    assert_eq!(lines.next().unwrap(), "Millennium Falcon");
-    assert_eq!(lines.next().unwrap(), "75.5");
-    assert!(lines.next().is_none());
+#[test]
+fn classes_as_args_to_methods() {
+    assert_program_stdout! {r#"
+        class Superhero {
+          // Methods should be able to accept a parameter
+          useSpecialPower(hero) {
+            print "Using power: " + hero.specialPower;
+          }
+
+          // Methods should be able to accept a parameter
+          // of any type
+          hasSpecialPower(hero) {
+            return hero.specialPower;
+          }
+
+          // Methods should be able to accept class
+          // instances as parameters and then update their
+          // properties
+          giveSpecialPower(hero, power) {
+            hero.specialPower = power;
+          }
+        }
+
+        fun performHeroics(hero, superheroClass) {
+          if (superheroClass.hasSpecialPower(hero)) {
+            superheroClass.useSpecialPower(hero);
+          } else {
+            print "No special power available";
+          }
+        }
+
+        var superman = Superhero();
+        var heroClass = Superhero();
+
+        if (true) {
+          heroClass.giveSpecialPower(superman, "Flight");
+        } else {
+          heroClass.giveSpecialPower(superman, "Strength");
+        }
+
+        performHeroics(superman, heroClass);
+            "#,
+    "Using power: Flight"}
 }

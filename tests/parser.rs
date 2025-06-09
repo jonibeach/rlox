@@ -395,3 +395,44 @@ fn class_prop_assign() {
         "(print (access (access (ident x) name) value))"
     );
 }
+
+#[test]
+fn class_methods() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        class Robot {
+          beep() {
+            print "Beep boop!";
+          }
+        }
+
+        var r2d2 = Robot();
+        // Calling a method on an instance should work
+        r2d2.beep();
+
+        // Calling a method on a class instance should work
+        Robot().beep();
+    "#;
+
+    lexer.lex(src);
+
+    assert_eq!(lexer.errors(), [].as_slice());
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let mut decls = program.decls().iter();
+
+    assert_eq!(format!("{}", decls.next().unwrap()), "(classDecl Robot (methods (funDecl beep (block (print Beep boop!)))))");
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(varDecl r2d2 (call (ident Robot)))"
+    );
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(call (access (ident r2d2) beep))"
+    );
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(call (access (call (ident Robot)) beep))"
+    );
+}

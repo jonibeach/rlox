@@ -647,7 +647,6 @@ impl<'src> Parser<'src> {
         let mut decls = Vec::new();
 
         while self.peek().is_some() {
-            eprintln!("parsing program (or innerblock) {:?}", self.peek());
             match self.parse_decl() {
                 Some(d) => decls.push(d),
                 None => continue,
@@ -671,14 +670,12 @@ impl<'src> Parser<'src> {
     ///                 | whileStmt
     ///                 | block ;
     fn parse_stmt(&mut self) -> Result<'src, Stmt<'src>> {
-        eprintln!("parsing stmt {:?}", self.peek());
         let line_pos = self.line_pos();
         match self.next() {
             Some(Token::Keyword(Keyword::For)) => self.parse_for_stmt(),
             Some(Token::Keyword(Keyword::If)) => self.parse_if_stmt(),
             Some(Token::Keyword(Keyword::Print)) => {
                 // printStmt      → "print" expression ";" ;
-                eprintln!("parsing print stmt");
                 let expr = self.parse_expr()?;
                 self.expect_after(Token::Semicolon, "value")?;
 
@@ -691,7 +688,6 @@ impl<'src> Parser<'src> {
                     return self.err(ErrorKind::DuplicateVariable);
                 }
 
-                eprintln!("parsing return stmt");
                 let expr = self.parse_expr().ok();
                 self.expect_after(Token::Semicolon, "return value")?;
 
@@ -710,13 +706,10 @@ impl<'src> Parser<'src> {
 
     /// exprStmt       → expression ";" ;
     fn parse_expr_stmt(&self) -> Result<'src, Expr<'src>> {
-        eprintln!("parsing expr stmt");
         let expr = self.parse_expr()?;
         if self.force_ending_semicolon {
             self.expect_after(Token::Semicolon, "expression")?;
         }
-
-        eprintln!("parsed expr stmt {expr}");
 
         Ok(expr)
     }
@@ -728,10 +721,8 @@ impl<'src> Parser<'src> {
         self.with_inner_bloc(None, |s| {
             let line_pos = s.line_pos();
             s.expect_after_token(Token::LeftParen)?;
-            eprintln!("parsing for stmt {:?}", s.peek());
             let begin = match s.next() {
                 Some(Token::Semicolon) => {
-                    eprintln!("got empty begin");
                     None
                 }
                 other => Some(match other {
@@ -743,12 +734,6 @@ impl<'src> Parser<'src> {
                 }),
             };
 
-            eprintln!(
-                "got begin {} {:?}",
-                begin.as_ref().map(|i| format!("{i}")).unwrap_or_default(),
-                s.peek()
-            );
-
             let condition = match (s.parse_expr(), s.next()) {
                 (Err(_), Some(Token::Semicolon)) => None,
                 (Ok(c), Some(Token::Semicolon)) => Some(c),
@@ -756,29 +741,10 @@ impl<'src> Parser<'src> {
                 (Err(e), _) => return Err(e),
             };
 
-            eprintln!("HERR {:?} {:?}", s.peek(), condition);
-
-            eprintln!(
-                "got cond {}",
-                condition
-                    .as_ref()
-                    .map(|i| format!("{i}"))
-                    .unwrap_or_default()
-            );
             let after_iter = s.parse_expr().ok();
             s.expect_after(Token::RightParen, "for clauses")?;
 
-            eprintln!(
-                "got after iter {}",
-                after_iter
-                    .as_ref()
-                    .map(|i| format!("{i}"))
-                    .unwrap_or_default()
-            );
-
             let body = s.parse_stmt()?.into();
-
-            eprintln!("got body {body}");
 
             Ok(StmtKind::For {
                 begin,
@@ -874,11 +840,7 @@ impl<'src> Parser<'src> {
                 }
             }
 
-            eprintln!("end of block or file");
-
             s.expect_after(Token::RightBrace, "block")?;
-
-            eprintln!("valid block");
 
             Ok(BlockInner { decls }.into_ast(line_pos))
         })
@@ -887,7 +849,6 @@ impl<'src> Parser<'src> {
     /// declaration    → classDecl | funDecl | varDecl | statement;
     fn parse_decl(&mut self) -> Option<Decl<'src>> {
         let line_pos = self.line_pos();
-        eprintln!("parsing decl {:?}", self.peek());
         let maybe_decl = match self.next() {
             Some(Token::Keyword(Keyword::Class)) => self.parse_class_decl(),
             Some(Token::Keyword(Keyword::Fun)) => self
@@ -907,7 +868,6 @@ impl<'src> Parser<'src> {
         match maybe_decl {
             Ok(decl) => Some(decl),
             Err(e) => {
-                eprintln!("ERR {e}");
                 self.errors.push(e);
 
                 self.recover();
@@ -926,30 +886,22 @@ impl<'src> Parser<'src> {
 
         let mut parent = None;
         if let Some(Token::Less) = self.peek() {
-            eprintln!("parsing superclass");
             parent = match self.next() {
                 Some(Token::Identifier(i)) => Some(i),
                 _ => return self.custom_err("superclass name"),
             };
         }
 
-        eprintln!("parsing class body");
 
         self.expect_custom(Token::LeftBrace, "before class body")?;
 
         let mut methods = Vec::new();
 
         while !matches!(self.peek(), Some(Token::RightBrace) | None) {
-            eprintln!("parsing class method {:?}", self.peek());
-            self.next().unwrap();
             methods.push(self.parse_fun_decl("method")?)
         }
 
-        eprintln!("parsed methods");
-
         self.expect_custom(Token::RightBrace, "after class body")?;
-
-        eprintln!("valid class");
 
         Ok(DeclKind::Class {
             name,
@@ -970,8 +922,6 @@ impl<'src> Parser<'src> {
             lookup.insert(p);
         }
 
-        eprintln!("got first param {params:?}");
-
         while let Some(Token::Comma) = self.peek() {
             self.next().unwrap();
 
@@ -979,7 +929,6 @@ impl<'src> Parser<'src> {
                 return self.custom_err("parameter name");
             };
 
-            eprintln!("getting another param {p}");
             if lookup.contains(&p) {
                 self.prev().unwrap();
                 return self.err(ErrorKind::DuplicateVariable);
@@ -988,8 +937,6 @@ impl<'src> Parser<'src> {
             params.push(p);
             lookup.insert(p);
         }
-
-        eprintln!("params done {params:?}");
 
         Ok(params)
     }
@@ -1003,8 +950,6 @@ impl<'src> Parser<'src> {
 
         self.expect_after(Token::LeftParen, "function name")?;
 
-        eprintln!("parsing fn {name}");
-
         let params = self.parse_parameters()?;
 
         self.expect_after(Token::RightParen, "parameters")?;
@@ -1012,8 +957,6 @@ impl<'src> Parser<'src> {
         self.fn_count += 1;
         let body = self.parse_block(Some(HashSet::from_iter(params.iter().copied())))?;
         self.fn_count -= 1;
-
-        eprintln!("parsed block body {body}");
 
         self.defined_vars_in_scope.insert(name);
 
@@ -1024,14 +967,11 @@ impl<'src> Parser<'src> {
 
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
     fn parse_var_decl(&mut self) -> Result<'src, VarDecl<'src>> {
-        eprintln!("parsing var decl {:?}", self.peek());
 
         let Some(Token::Identifier(name)) = self.next() else {
-            eprintln!("didn't get ident");
             return self.custom_err("variable name");
         };
 
-        eprintln!("SETTING DECL VAR TO {name}");
         self.declaring_var.set(Some(name));
 
         let var_decl = match self.next() {
@@ -1045,8 +985,6 @@ impl<'src> Parser<'src> {
                 }
 
                 self.expect_after(Token::Semicolon, "variable declaration")?;
-
-                eprintln!("got decl with value {value}");
 
                 let value = value.into();
 
@@ -1062,8 +1000,7 @@ impl<'src> Parser<'src> {
 
                 VarDecl { name, value: None }
             }
-            other => {
-                eprintln!("got non equal {other:?}");
+            _ => {
                 self.declaring_var.set(None);
 
                 return self.err(ErrorKind::TokenAfter(
@@ -1084,8 +1021,6 @@ impl<'src> Parser<'src> {
     /// assignment     → ( call "." )? IDENTIFIER "=" assignment
     ///                | logic_or ;
     fn parse_expr(&self) -> Result<'src, Expr<'src>> {
-        eprintln!("parsing expr");
-
         let or_or_setter = self.parse_logic_or()?;
 
         if self.accept(Token::Equal).is_some() {
@@ -1113,9 +1048,7 @@ impl<'src> Parser<'src> {
     // logic_or       → logic_and ( "or" logic_and )* ;
     fn parse_logic_or(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
-        eprintln!("parsing logic or");
         let mut a = self.parse_logic_and()?;
-        eprintln!("parsed logic or {a}");
 
         while let Some(Token::Keyword(Keyword::Or)) = self.peek() {
             self.next().unwrap();
@@ -1124,7 +1057,6 @@ impl<'src> Parser<'src> {
             a = ExprKind::Or(a.into(), b.into()).into_ast(line_pos);
         }
 
-        eprintln!("done with logic or {a}");
 
         Ok(a)
     }
@@ -1132,10 +1064,7 @@ impl<'src> Parser<'src> {
     /// logic_and      → equality ( "and" equality )* ;
     fn parse_logic_and(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
-        eprintln!("parsing logic and");
         let mut a = self.parse_eq()?;
-
-        eprintln!("parsed logic and {a}");
 
         while let Some(Token::Keyword(Keyword::And)) = self.peek() {
             self.next().unwrap();
@@ -1144,18 +1073,13 @@ impl<'src> Parser<'src> {
             a = ExprKind::And(a.into(), b.into()).into_ast(line_pos);
         }
 
-        eprintln!("done with logic and {a}");
-
         Ok(a)
     }
 
     /// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
     fn parse_eq(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
-        eprintln!("parsing eq");
         let mut a = self.parse_cmp()?;
-
-        eprintln!("parsed eq {a}");
 
         while let Some(Token::EqualEqual | Token::BangEqual) = self.peek() {
             let op = match self.next().unwrap() {
@@ -1164,11 +1088,8 @@ impl<'src> Parser<'src> {
                 other => unreachable!("{other}"),
             };
             let b = self.parse_cmp()?;
-            eprintln!("accepted eq {a} {op:?} {b}");
             a = ExprKind::Eq(a.into(), op, b.into()).into_ast(line_pos);
         }
-
-        eprintln!("done with eq {a}");
 
         Ok(a)
     }
@@ -1177,8 +1098,6 @@ impl<'src> Parser<'src> {
     fn parse_cmp(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
         let mut a = self.parse_term()?;
-
-        eprintln!("parsing cmp {a}");
 
         while let Some(Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual) =
             self.peek()
@@ -1191,7 +1110,6 @@ impl<'src> Parser<'src> {
                 other => unreachable!("{other}"),
             };
             let b = self.parse_term()?;
-            eprintln!("accepted cmp {a} {op:?} {b}");
             a = ExprKind::Cmp(a.into(), op, b.into()).into_ast(line_pos);
         }
 
@@ -1202,7 +1120,6 @@ impl<'src> Parser<'src> {
     fn parse_term(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
         let mut a = self.parse_factor()?;
-        eprintln!("parsing term {a}");
 
         while let Some(Token::Plus | Token::Minus) = self.peek() {
             let op = match self.next().unwrap() {
@@ -1211,7 +1128,6 @@ impl<'src> Parser<'src> {
                 other => unreachable!("{other}"),
             };
             let b = self.parse_factor()?;
-            eprintln!("accepted term {a} {op:?} {b}");
             a = ExprKind::Term(a.into(), op, b.into()).into_ast(line_pos);
         }
 
@@ -1223,7 +1139,6 @@ impl<'src> Parser<'src> {
         let line_pos = self.line_pos();
         let mut a = self.parse_unary()?;
 
-        eprintln!("parsing factor {a}");
 
         while let Some(Token::Slash | Token::Star) = self.peek() {
             let op = match self.next().unwrap() {
@@ -1232,7 +1147,6 @@ impl<'src> Parser<'src> {
                 other => unreachable!("{other}"),
             };
             let b = self.parse_unary()?;
-            eprintln!("accepted factor {a} {op:?} {b}");
             a = ExprKind::Factor(a.into(), op, b.into()).into_ast(line_pos)
         }
 
@@ -1246,8 +1160,6 @@ impl<'src> Parser<'src> {
             .accept(Token::Bang)
             .or_else(|| self.accept(Token::Minus));
 
-        eprintln!("parsing unary {unary:?}");
-
         if let Some(unary) = unary {
             let op = match unary {
                 Token::Bang => UnaryOp::Not,
@@ -1255,11 +1167,8 @@ impl<'src> Parser<'src> {
                 other => unreachable!("{other}"),
             };
 
-            eprintln!("accepted unary {op} {unary}");
-
             Ok(ExprKind::Unary(op, self.parse_unary()?.into()).into_ast(line_pos))
         } else {
-            eprintln!("not unary {:?}", self.peek());
             self.parse_call()
         }
     }
@@ -1268,23 +1177,17 @@ impl<'src> Parser<'src> {
     fn parse_arguments(&self) -> Result<'src, Vec<Expr<'src>>> {
         let mut args = Vec::new();
 
-        eprintln!("parsing args");
         if self.peek() == Some(Token::RightParen) {
-            eprintln!("got zero args");
             return Ok(args);
         }
 
         args.push(self.parse_expr()?);
-        eprintln!("got first arg {args:?}");
 
         while let Some(Token::Comma) = self.peek() {
             self.next().unwrap();
 
-            eprintln!("getting another arg");
             args.push(self.parse_expr()?);
         }
-
-        eprintln!("args done {args:?}");
 
         Ok(args)
     }
@@ -1294,27 +1197,19 @@ impl<'src> Parser<'src> {
         let line_pos = self.line_pos();
         let mut call = self.parse_primary()?;
 
-        eprintln!("maybe parsing call {call}");
-
         while let Some(next) = self.accept(Token::LeftParen).or(self.accept(Token::Dot)) {
             let next = match next {
                 Token::Dot => {
-                    eprintln!("Parsing access");
                     let Some(Token::Identifier(ident)) = self.next() else {
                         return self.custom_err("property name after '.'");
                     };
 
-                    eprintln!("Parsed access .{ident}");
-
                     ExprKind::Access(call.into(), ident)
                 }
                 Token::LeftParen => {
-                    eprintln!("parsing call");
                     let args = self.parse_arguments()?;
-                    eprintln!("args {args:?} {:?}", self.peek());
                     self.expect_after(Token::RightParen, "arguments")?;
 
-                    eprintln!("valid call");
                     ExprKind::Call {
                         callee: call.into(),
                         args,
@@ -1333,13 +1228,9 @@ impl<'src> Parser<'src> {
     ///     "(" expression ")"
     fn parse_group(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
-        eprintln!("parsing group");
-
         let inner = self.parse_expr()?;
 
         self.expect_after(Token::RightParen, "expression")?;
-
-        eprintln!("parsing group DONE");
 
         Ok(ExprKind::Group(inner.into()).into_ast(line_pos))
     }
@@ -1348,7 +1239,6 @@ impl<'src> Parser<'src> {
     ///                 | "(" expression ")" | IDENTIFIER "=" expression
     fn parse_primary(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
-        eprintln!("parisng primary {:?}", self.peek());
         let ast = match self.next() {
             Some(Token::Number(n, _)) => Primary::Number(n),
             Some(Token::String(s)) => Primary::String(Cow::Borrowed(s)),
@@ -1356,15 +1246,9 @@ impl<'src> Parser<'src> {
             Some(Token::Keyword(Keyword::False)) => Primary::Bool(false),
             Some(Token::Keyword(Keyword::Nil)) => Primary::Nil,
             Some(Token::Identifier(i)) => {
-                eprintln!("ACCESSING VAR {i}");
 
                 if let Some(declaring_var) = self.declaring_var.get() {
-                    eprintln!(
-                        "ALREADY DECLARING VAR {declaring_var} {:?}",
-                        self.defined_vars_in_scope
-                    );
                     if !self.defined_vars_in_scope.contains(i) && declaring_var == i {
-                        eprintln!("RETURNING ERR");
                         self.prev().unwrap();
                         return self.err(ErrorKind::CantReadLocalVarInOwnInit);
                     }
@@ -1375,14 +1259,10 @@ impl<'src> Parser<'src> {
                 return self.parse_group();
             }
             _ => {
-                eprintln!("going back at {:?}", self.peek());
                 self.prev().unwrap();
-                eprintln!("after goinf back {:?}", self.peek());
                 return self.custom_err("expression");
             }
         };
-
-        eprintln!("accepted primary {ast}");
 
         Ok(ExprKind::Primary(ast).into_ast(line_pos))
     }

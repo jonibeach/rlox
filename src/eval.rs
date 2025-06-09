@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     collections::HashMap,
-    fmt::Display,
+    fmt::{Debug, Display},
     io::Write,
     rc::Rc,
 };
@@ -90,7 +90,7 @@ pub struct FunDef<'src> {
 pub struct Class<'src> {
     name: &'src str,
     parent: Option<Box<Self>>,
-    methods: HashMap<&'src str, FunDef<'src>>,
+    methods: Rc<RefCell<Map<'src>>>,
 }
 
 type Map<'src> = HashMap<&'src str, (usize, Rc<RefCell<Value<'src>>>)>;
@@ -135,6 +135,7 @@ impl<'src> Value<'src> {
 
                 for p in params.iter().rev() {
                     let arg = args.pop().unwrap();
+
                     executor
                         .environment
                         .borrow_mut()
@@ -155,7 +156,15 @@ impl<'src> Value<'src> {
             }
             Self::Class(class) => Ok(Rc::new(RefCell::new(Self::ClassInstance {
                 c: class.clone(), // We will call the constructor here at some point
-                props: Rc::new(HashMap::new().into()),
+                props: Rc::new(
+                    class
+                        .methods
+                        .borrow()
+                        .iter()
+                        .map(|(name, (pos, f))| (*name, (*pos, Rc::new(f.borrow().clone().into()))))
+                        .collect::<HashMap<_, _>>()
+                        .into(),
+                ),
             }))),
             Self::Primary(..) | Self::ClassInstance { .. } | Self::Map(..) => {
                 executor.err(ErrorKind::NotCallable)
@@ -173,13 +182,7 @@ impl<'src> Value<'src> {
                 props
                     .borrow()
                     .get(key)
-                    .and_then(|(pos, val)| {
-                        if executor.pos.get() >= *pos {
-                            Some(val)
-                        } else {
-                            None
-                        }
-                    })
+                    .map(|(_, val)|val)
                     .ok_or_else(|| executor.err_inner(ErrorKind::UndefinedProperty(key)))?,
             )),
             _ => executor.err(ErrorKind::OnlyClassesHaveProperties),
@@ -230,7 +233,7 @@ impl<'src> From<Primary<'src>> for Value<'src> {
 impl Display for Value<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Primary(p) => p.fmt(f),
+            Self::Primary(p) => write!(f, "{p}"),
             Self::NativeFunction(..) => write!(f, "<native fn>"),
             Self::Function(FunDef { name, .. }, _) => {
                 write!(f, "<fn {name}>")
@@ -245,11 +248,17 @@ impl Display for Value<'_> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Environment<'src> {
     /// `None` when the environment has no parent. Ie. the global environment
     parent: Option<Rc<RefCell<Self>>>,
     definitions: HashMap<&'src str, (usize, Rc<RefCell<Value<'src>>>)>,
+}
+
+impl Debug for Environment<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.definitions.fmt(f)
+    }
 }
 
 impl<'src> Environment<'src> {
@@ -401,6 +410,22 @@ impl<'src, T: Write> Executor<'src, T> {
         Ok(())
     }
 
+    fn get_fun_value(&self, decl: &'src FunDecl<'src>) -> Rc<RefCell<Value<'src>>> {
+        let FunDecl { name, params, body } = decl;
+        Rc::new(
+            Value::Function(
+                FunDef {
+                    pos: self.pos.get(),
+                    name,
+                    params,
+                    body: body.kind().decls(),
+                },
+                Rc::clone(&self.environment),
+            )
+            .into(),
+        )
+    }
+
     fn eval_decl(&self, decl: &'src Decl<'src>) -> Result<'src, ()> {
         self.set_line(decl);
         match decl.kind() {
@@ -411,47 +436,46 @@ impl<'src, T: Write> Executor<'src, T> {
                 self.eval_stmt(s)?;
             }
             DeclKind::Var(v) => self.eval_var_decl(v)?,
-            DeclKind::Fun(FunDecl { name, params, body }) => {
+            DeclKind::Fun(decl) => {
                 let pos = self.pos.get();
-                self.environment.borrow_mut().definitions.insert(
-                    name,
-                    (
-                        pos,
-                        Rc::new(
-                            Value::Function(
-                                FunDef {
-                                    pos,
-                                    name,
-                                    params,
-                                    body: body.kind().decls(),
-                                },
-                                Rc::clone(&self.environment),
-                            )
-                            .into(),
-                        ),
-                    ),
-                );
+                self.environment
+                    .borrow_mut()
+                    .definitions
+                    .insert(decl.name, (pos, self.get_fun_value(decl)));
             }
             DeclKind::Class {
                 name,
                 parent: _p,
-                methods: method_decls,
+                methods,
             } => {
                 let pos = self.pos.get();
 
-                let mut methods = HashMap::new();
-
-                for FunDecl { name, params, body } in method_decls {
-                    methods.insert(
-                        *name,
-                        FunDef {
-                            pos,
-                            name,
-                            params,
-                            body: body.kind().decls(),
-                        },
-                    );
-                }
+                let methods = Rc::new(
+                    methods
+                        .iter()
+                        .map(|m| {
+                            (
+                                m.name,
+                                (
+                                    self.pos.get(),
+                                    Rc::new(
+                                        Value::Function(
+                                            FunDef {
+                                                pos: self.pos.get(),
+                                                name,
+                                                params: &m.params,
+                                                body: m.body.kind().decls(),
+                                            },
+                                            Rc::clone(&self.environment),
+                                        )
+                                        .into(),
+                                    ),
+                                ),
+                            )
+                        })
+                        .collect::<HashMap<_, _>>()
+                        .into(),
+                );
 
                 self.environment.borrow_mut().definitions.insert(
                     name,
@@ -679,14 +703,15 @@ impl<'src, T: Write> Executor<'src, T> {
             }
             ExprKind::Access(obj, key) => self.eval_expr(obj)?.borrow().access(key, self)?,
             ExprKind::Ident(ident) => {
-                let res = self
-                    .environment
-                    .borrow()
-                    .resolve(ident, self)?
-                    .borrow()
-                    .clone();
+                let val = self.environment.borrow().resolve(ident, self)?;
 
-                Rc::new(res.into())
+                // Pass classes by reference and everything else by value
+                let val = match &*val.borrow() {
+                    Value::ClassInstance { .. } => Rc::clone(&val),
+                    other => Rc::new(other.clone().into()),
+                };
+
+                val
             }
             ExprKind::Group(i) => self.eval_expr(i)?,
             ExprKind::Primary(p) => Rc::new(RefCell::new(p.clone().into())),
