@@ -154,18 +154,43 @@ impl<'src> Value<'src> {
 
                 Ok(ret)
             }
-            Self::Class(class) => Ok(Rc::new(RefCell::new(Self::ClassInstance {
-                c: class.clone(), // We will call the constructor here at some point
-                props: Rc::new(
-                    class
-                        .methods
-                        .borrow()
-                        .iter()
-                        .map(|(name, (pos, f))| (*name, (*pos, Rc::new(f.borrow().clone().into()))))
-                        .collect::<HashMap<_, _>>()
-                        .into(),
-                ),
-            }))),
+            Self::Class(class) => {
+                let instance = Rc::new(RefCell::new(Self::ClassInstance {
+                    c: class.clone(), // We will call the constructor here at some point
+                    props: Rc::new(HashMap::new().into()),
+                }));
+
+                for (name, (pos, m)) in class.methods.borrow().iter() {
+                    // We wan't our own instance of the methods for each class instance
+                    let m = m.borrow().clone();
+
+                    let method_with_this = match m {
+                        Value::Function(def, env) => {
+                            let mut env = env.borrow().clone();
+                            env.this = Some(Rc::clone(&instance));
+                            Value::Function(def, Rc::new(env.into()))
+                        }
+                        _ => unreachable!(),
+                    };
+
+                    match &*instance.borrow() {
+                        Self::ClassInstance { props, .. } => {
+                            props
+                                .borrow_mut()
+                                .insert(name, (*pos, Rc::new(method_with_this.into())));
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+
+                if let Self::ClassInstance { props, .. } = &*instance.borrow() {
+                    if let Some((_, init)) = props.borrow().get("init") {
+                        init.borrow().call(args, executor)?;
+                    }
+                }
+
+                Ok(instance)
+            }
             Self::Primary(..) | Self::ClassInstance { .. } | Self::Map(..) => {
                 executor.err(ErrorKind::NotCallable)
             }
@@ -178,13 +203,15 @@ impl<'src> Value<'src> {
         executor: &Executor<'src, T>,
     ) -> Result<'src, Rc<RefCell<Value<'src>>>> {
         match self {
-            Self::ClassInstance { props, .. } => Ok(Rc::clone(
-                props
-                    .borrow()
+            Self::ClassInstance { props, .. } => {
+                let props = props.borrow();
+                let val = props
                     .get(key)
-                    .map(|(_, val)|val)
-                    .ok_or_else(|| executor.err_inner(ErrorKind::UndefinedProperty(key)))?,
-            )),
+                    .map(|(_, val)| val)
+                    .ok_or_else(|| executor.err_inner(ErrorKind::UndefinedProperty(key)))?;
+
+                Ok(Rc::clone(val))
+            }
             _ => executor.err(ErrorKind::OnlyClassesHaveProperties),
         }
     }
@@ -248,17 +275,12 @@ impl Display for Value<'_> {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Environment<'src> {
     /// `None` when the environment has no parent. Ie. the global environment
     parent: Option<Rc<RefCell<Self>>>,
+    this: Option<Rc<RefCell<Value<'src>>>>,
     definitions: HashMap<&'src str, (usize, Rc<RefCell<Value<'src>>>)>,
-}
-
-impl Debug for Environment<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.definitions.fmt(f)
-    }
 }
 
 impl<'src> Environment<'src> {
@@ -278,6 +300,21 @@ impl<'src> Environment<'src> {
         }
 
         executor.err(ErrorKind::UndefinedVariable(ident))
+    }
+
+    fn resolve_this<T: Write>(
+        &self,
+        executor: &Executor<'src, T>,
+    ) -> Result<'src, Rc<RefCell<Value<'src>>>> {
+        if let Some(this) = &self.this {
+            return Ok(Rc::clone(this));
+        }
+
+        if let Some(p) = &self.parent {
+            return p.borrow().resolve_this(executor);
+        }
+
+        todo!()
     }
 }
 
@@ -318,6 +355,7 @@ impl<'src, T: Write> Executor<'src, T> {
             environment: Rc::new(
                 Environment {
                     parent: None,
+                    this: None,
                     definitions: globals,
                 }
                 .into(),
@@ -387,6 +425,7 @@ impl<'src, T: Write> Executor<'src, T> {
         let inner = self.get_inner_executor(Rc::new(
             Environment {
                 parent: Some(Rc::clone(&parent)),
+                this: None,
                 definitions: HashMap::new(),
             }
             .into(),
@@ -462,7 +501,7 @@ impl<'src, T: Write> Executor<'src, T> {
                                         Value::Function(
                                             FunDef {
                                                 pos: self.pos.get(),
-                                                name,
+                                                name: m.name,
                                                 params: &m.params,
                                                 body: m.body.kind().decls(),
                                             },
@@ -591,7 +630,7 @@ impl<'src, T: Write> Executor<'src, T> {
                     let c = self.eval_expr(call)?;
                     let val = self.eval_expr(val)?;
 
-                    c.borrow_mut().set(ident, val.clone(), self)?;
+                    c.borrow_mut().set(ident, Rc::clone(&val), self)?;
 
                     val
                 }
@@ -715,7 +754,8 @@ impl<'src, T: Write> Executor<'src, T> {
             }
             ExprKind::Group(i) => self.eval_expr(i)?,
             ExprKind::Primary(p) => Rc::new(RefCell::new(p.clone().into())),
-            ExprKind::This | ExprKind::Super(..) => todo!(),
+            ExprKind::This => self.environment.borrow().resolve_this(self)?,
+            ExprKind::Super(..) => todo!(),
         };
 
         Ok(v)

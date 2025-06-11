@@ -541,7 +541,6 @@ fn scopes() {
     }
 }
 
-
 #[test]
 fn mutable_closure() {
     assert_program_stdout! {r#"
@@ -816,4 +815,59 @@ fn classes_as_args_to_methods() {
         performHeroics(superman, heroClass);
             "#,
     "Using power: Flight"}
+}
+
+#[test]
+fn basic_this_usage() {
+    assert_program_stdout! {
+        r#"
+            class Spaceship {
+              identify() {
+                // this should be bound to the instance
+                print this;
+              }
+            }
+
+            // Calling a method on a class instance should work
+            Spaceship().identify();
+        "#,
+        "Spaceship instance"
+    }
+}
+
+#[test]
+fn this_bounding_check() {
+    assert_program_stdout! {
+        r#"
+        class Animal {
+          makeSound() {
+            print this.sound;
+          }
+            
+          identify() {
+            print this.species;
+          }
+        }
+            
+        var dog = Animal();
+        dog.sound = "Woof";
+        dog.species = "Dog";
+            
+        var cat = Animal();
+        cat.sound = "Meow";
+        cat.species = "Cat";
+        cat.test = "lol";
+
+            
+        // The this keyword should be bound to the
+        // class instance that the method is called on
+        cat.makeSound = dog.makeSound;
+        dog.identify = cat.identify;
+
+        cat.makeSound();
+        dog.identify();
+                   "#,
+        "Woof",
+        "Cat"
+    }
 }

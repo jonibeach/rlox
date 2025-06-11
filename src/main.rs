@@ -68,7 +68,6 @@ fn main() {
                 Ok(res) => println!("{}", res),
                 Err(e) => {
                     eprintln!("{e}");
-                    drop(e);
                     std::process::exit(70)
                 }
             };
@@ -78,7 +77,6 @@ fn main() {
             if !lexer.errors().is_empty() {
                 std::process::exit(65)
             }
-            eprintln!("got ehre");
             let mut parser = Parser::new(lexer.tokens());
             let program = match parser.parse() {
                 Ok(program) => program,

@@ -427,6 +427,7 @@ pub enum ErrorKind<'src> {
     DuplicateVariable,
     InvalidReturn,
     InvalidAssignmentTarget,
+    CannotUseThisOutsideOfClass,
 }
 
 impl Display for ErrorKind<'_> {
@@ -445,6 +446,7 @@ impl Display for ErrorKind<'_> {
             }
             Self::InvalidReturn => f.write_str("Can't return from top-level code."),
             Self::InvalidAssignmentTarget => f.write_str("Invalid assignment target."),
+            Self::CannotUseThisOutsideOfClass => f.write_str("Can't use 'this' outside of class"),
         }
     }
 }
@@ -484,6 +486,12 @@ type Result<'src, T> = std::result::Result<T, Error<'src>>;
 type AcceptToken<'src> = Option<Token<'src>>;
 type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
 
+#[derive(Clone, Copy)]
+enum Declaring<'src> {
+    Var(&'src str),
+    Class(&'src str),
+}
+
 /// Parses the lox programming language using a recursive descent approach based on Lox's grammar rules
 ///
 /// See https://craftinginterpreters.com/appendix-i.html
@@ -492,7 +500,7 @@ pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
     idx: Cell<usize>,
     is_global_scope: bool,
-    declaring_var: Cell<Option<&'src str>>,
+    declaring: Cell<Option<Declaring<'src>>>,
     fn_count: usize,
     defined_vars_in_scope: HashSet<&'src str>,
     force_ending_semicolon: bool,
@@ -504,8 +512,8 @@ impl<'src> Parser<'src> {
         Self {
             tokens,
             idx: 0.into(),
-            declaring_var: None.into(),
             is_global_scope: true,
+            declaring: None.into(),
             fn_count: 0,
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: false,
@@ -518,7 +526,7 @@ impl<'src> Parser<'src> {
             idx: 0.into(),
             is_global_scope: true,
             fn_count: 0,
-            declaring_var: None.into(),
+            declaring: None.into(),
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: true,
             errors: Vec::new(),
@@ -722,9 +730,7 @@ impl<'src> Parser<'src> {
             let line_pos = s.line_pos();
             s.expect_after_token(Token::LeftParen)?;
             let begin = match s.next() {
-                Some(Token::Semicolon) => {
-                    None
-                }
+                Some(Token::Semicolon) => None,
                 other => Some(match other {
                     Some(Token::Keyword(Keyword::Var)) => ForBegin::VarDecl(s.parse_var_decl()?),
                     _ => {
@@ -892,14 +898,16 @@ impl<'src> Parser<'src> {
             };
         }
 
-
         self.expect_custom(Token::LeftBrace, "before class body")?;
 
         let mut methods = Vec::new();
+        self.declaring.set(Some(Declaring::Class(name)));
 
         while !matches!(self.peek(), Some(Token::RightBrace) | None) {
             methods.push(self.parse_fun_decl("method")?)
         }
+
+        self.declaring.set(None);
 
         self.expect_custom(Token::RightBrace, "after class body")?;
 
@@ -967,18 +975,16 @@ impl<'src> Parser<'src> {
 
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
     fn parse_var_decl(&mut self) -> Result<'src, VarDecl<'src>> {
-
         let Some(Token::Identifier(name)) = self.next() else {
             return self.custom_err("variable name");
         };
 
-        self.declaring_var.set(Some(name));
+        self.declaring.set(Some(Declaring::Var(name)));
 
         let var_decl = match self.next() {
             Some(Token::Equal) => {
                 let value = self.parse_expr()?;
 
-                // We are allowed to redeclare a variable with its own value, but not with another value
                 if self.defined_vars_in_scope.contains(name) && !self.is_global_scope {
                     self.prev().unwrap();
                     return self.err(ErrorKind::DuplicateVariable);
@@ -991,7 +997,7 @@ impl<'src> Parser<'src> {
                 VarDecl { name, value }
             }
             Some(Token::Semicolon) => {
-                self.declaring_var.set(None);
+                self.declaring.set(None);
 
                 if self.defined_vars_in_scope.contains(name) {
                     self.prev().unwrap();
@@ -1001,7 +1007,7 @@ impl<'src> Parser<'src> {
                 VarDecl { name, value: None }
             }
             _ => {
-                self.declaring_var.set(None);
+                self.declaring.set(None);
 
                 return self.err(ErrorKind::TokenAfter(
                     Token::Semicolon,
@@ -1011,7 +1017,7 @@ impl<'src> Parser<'src> {
         };
 
         self.defined_vars_in_scope.insert(name);
-        self.declaring_var.set(None);
+        self.declaring.set(None);
 
         Ok(var_decl)
     }
@@ -1056,7 +1062,6 @@ impl<'src> Parser<'src> {
 
             a = ExprKind::Or(a.into(), b.into()).into_ast(line_pos);
         }
-
 
         Ok(a)
     }
@@ -1138,7 +1143,6 @@ impl<'src> Parser<'src> {
     fn parse_factor(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
         let mut a = self.parse_unary()?;
-
 
         while let Some(Token::Slash | Token::Star) = self.peek() {
             let op = match self.next().unwrap() {
@@ -1245,9 +1249,15 @@ impl<'src> Parser<'src> {
             Some(Token::Keyword(Keyword::True)) => Primary::Bool(true),
             Some(Token::Keyword(Keyword::False)) => Primary::Bool(false),
             Some(Token::Keyword(Keyword::Nil)) => Primary::Nil,
+            Some(Token::Keyword(Keyword::This)) => match self.declaring.get() {
+                Some(Declaring::Class(..)) => return Ok(ExprKind::This.into_ast(line_pos)),
+                _ => {
+                    self.prev().unwrap();
+                    return self.err(ErrorKind::CannotUseThisOutsideOfClass);
+                }
+            },
             Some(Token::Identifier(i)) => {
-
-                if let Some(declaring_var) = self.declaring_var.get() {
+                if let Some(Declaring::Var(declaring_var)) = self.declaring.get() {
                     if !self.defined_vars_in_scope.contains(i) && declaring_var == i {
                         self.prev().unwrap();
                         return self.err(ErrorKind::CantReadLocalVarInOwnInit);
