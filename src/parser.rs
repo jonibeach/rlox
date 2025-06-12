@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::HashSet,
     fmt::{Debug, Display},
 };
@@ -500,7 +500,7 @@ pub struct Parser<'src> {
     tokens: &'src [Symbol<Token<'src>>],
     idx: Cell<usize>,
     is_global_scope: bool,
-    declaring: Cell<Option<Declaring<'src>>>,
+    declaring: RefCell<Vec<Declaring<'src>>>,
     fn_count: usize,
     defined_vars_in_scope: HashSet<&'src str>,
     force_ending_semicolon: bool,
@@ -513,7 +513,7 @@ impl<'src> Parser<'src> {
             tokens,
             idx: 0.into(),
             is_global_scope: true,
-            declaring: None.into(),
+            declaring: Vec::new().into(),
             fn_count: 0,
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: false,
@@ -526,7 +526,7 @@ impl<'src> Parser<'src> {
             idx: 0.into(),
             is_global_scope: true,
             fn_count: 0,
-            declaring: None.into(),
+            declaring: Vec::new().into(),
             defined_vars_in_scope: HashSet::new(),
             force_ending_semicolon: true,
             errors: Vec::new(),
@@ -901,13 +901,13 @@ impl<'src> Parser<'src> {
         self.expect_custom(Token::LeftBrace, "before class body")?;
 
         let mut methods = Vec::new();
-        self.declaring.set(Some(Declaring::Class(name)));
+        self.declaring.borrow_mut().push(Declaring::Class(name));
 
         while !matches!(self.peek(), Some(Token::RightBrace) | None) {
             methods.push(self.parse_fun_decl("method")?)
         }
 
-        self.declaring.set(None);
+        self.declaring.borrow_mut().pop().unwrap();
 
         self.expect_custom(Token::RightBrace, "after class body")?;
 
@@ -979,7 +979,7 @@ impl<'src> Parser<'src> {
             return self.custom_err("variable name");
         };
 
-        self.declaring.set(Some(Declaring::Var(name)));
+        self.declaring.borrow_mut().push(Declaring::Var(name));
 
         let var_decl = match self.next() {
             Some(Token::Equal) => {
@@ -997,8 +997,6 @@ impl<'src> Parser<'src> {
                 VarDecl { name, value }
             }
             Some(Token::Semicolon) => {
-                self.declaring.set(None);
-
                 if self.defined_vars_in_scope.contains(name) {
                     self.prev().unwrap();
                     return self.err(ErrorKind::DuplicateVariable);
@@ -1007,7 +1005,7 @@ impl<'src> Parser<'src> {
                 VarDecl { name, value: None }
             }
             _ => {
-                self.declaring.set(None);
+                self.declaring.borrow_mut().pop().unwrap();
 
                 return self.err(ErrorKind::TokenAfter(
                     Token::Semicolon,
@@ -1017,7 +1015,7 @@ impl<'src> Parser<'src> {
         };
 
         self.defined_vars_in_scope.insert(name);
-        self.declaring.set(None);
+        self.declaring.borrow_mut().pop().unwrap();
 
         Ok(var_decl)
     }
@@ -1249,19 +1247,31 @@ impl<'src> Parser<'src> {
             Some(Token::Keyword(Keyword::True)) => Primary::Bool(true),
             Some(Token::Keyword(Keyword::False)) => Primary::Bool(false),
             Some(Token::Keyword(Keyword::Nil)) => Primary::Nil,
-            Some(Token::Keyword(Keyword::This)) => match self.declaring.get() {
-                Some(Declaring::Class(..)) => return Ok(ExprKind::This.into_ast(line_pos)),
-                _ => {
+            Some(Token::Keyword(Keyword::This)) => {
+                if self
+                    .declaring
+                    .borrow()
+                    .iter()
+                    .find(|d| matches!(d, Declaring::Class(..)))
+                    .is_some()
+                {
+                    return Ok(ExprKind::This.into_ast(line_pos));
+                } else {
                     self.prev().unwrap();
                     return self.err(ErrorKind::CannotUseThisOutsideOfClass);
                 }
-            },
+            }
             Some(Token::Identifier(i)) => {
-                if let Some(Declaring::Var(declaring_var)) = self.declaring.get() {
-                    if !self.defined_vars_in_scope.contains(i) && declaring_var == i {
-                        self.prev().unwrap();
-                        return self.err(ErrorKind::CantReadLocalVarInOwnInit);
-                    }
+                let curr_defining_this_var = self
+                    .declaring
+                    .borrow()
+                    .iter()
+                    .find(|d| matches!(d, Declaring::Var(decl_i) if *decl_i == i))
+                    .is_some();
+
+                if !self.defined_vars_in_scope.contains(i) && curr_defining_this_var {
+                    self.prev().unwrap();
+                    return self.err(ErrorKind::CantReadLocalVarInOwnInit);
                 }
                 return Ok(ExprKind::Ident(i).into_ast(line_pos));
             }

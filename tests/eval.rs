@@ -378,8 +378,8 @@ fn basic_fn_with_early_return() {
 
 #[test]
 fn fib() {
-    let mut lexer = Lexer::new();
-    let src = "
+    assert_program_stdout!{
+      "
         fun fib(n) {
           if (n < 2) return n;
           return fib(n - 2) + fib(n - 1);
@@ -390,26 +390,11 @@ fn fib() {
         print fib(4) == 3;
         print fib(10);
         print fib(20);
-        print (clock() - start);
-    ";
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    eprintln!("{:?}", executor.run());
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-    assert_eq!(lines.next().unwrap(), "3");
-    assert_eq!(lines.next().unwrap(), "true");
-    assert_eq!(lines.next().unwrap(), "55");
-    assert_eq!(lines.next().unwrap(), "6765");
-    assert!(lines.next().unwrap().parse::<f64>().is_ok());
-    assert!(lines.next().is_none());
+    ","3",
+    "true",
+    "55",
+    "6765"
+    }
 }
 
 #[test]
@@ -639,7 +624,9 @@ fn reassign_parameter() {
 
 #[test]
 fn timer() {
-    let src = r#"
+
+  assert_program_stdout!{
+    r#"
         var startTime = clock();
         var lastCheck = startTime;
         var running = true;
@@ -653,25 +640,10 @@ fn timer() {
             running = false;
           }
         }
-    "#;
-
-    let mut lexer = Lexer::new();
-    lexer.lex(src);
-
-    assert_eq!(lexer.errors(), [].as_slice());
-
-    let mut parser = Parser::new(lexer.tokens());
-    let program = parser.parse().unwrap();
-    let mut stdout: Vec<u8> = Vec::new();
-    let executor = Executor::new(program.decls(), &mut stdout);
-    executor.run().unwrap();
-
-    let stdout = String::from_utf8(stdout).unwrap();
-    let mut lines = stdout.lines();
-
-    assert_eq!(lines.next().unwrap(), "Starting timer for 0.2 seconds");
-    assert_eq!(lines.next().unwrap(), "Timer ended");
-    assert!(lines.next().is_none());
+    "#,
+    "Starting timer for 0.2 seconds",
+    "Timer ended"
+  }
 }
 
 #[test]
@@ -870,4 +842,36 @@ fn this_bounding_check() {
         "Woof",
         "Cat"
     }
+}
+#[test]
+fn this_undefined_property() {
+    let mut lexer = Lexer::new();
+    let src = r#"
+        class Confused {
+            method() {
+                fun inner(instance) {
+                    // this is a local variable
+                    var feeling = "confused";
+                    // Unless explicitly set, feeling can't be
+                    // accessed using this keyword
+                    print this.feeling; // expect runtime error
+                }
+                return inner;
+            }
+        }
+
+        var instance = Confused();
+        var m = instance.method();
+        // calling the function returned should work
+        m(instance);"#;
+
+    lexer.lex(src);
+
+    let mut parser = Parser::new(lexer.tokens());
+    let program = parser.parse().unwrap();
+    let executor = Executor::with_stdout(program.decls());
+    let err = executor.run().unwrap_err();
+    
+    assert!(matches!(err.kind(), ErrorKind::UndefinedProperty("feeling")));
+
 }
