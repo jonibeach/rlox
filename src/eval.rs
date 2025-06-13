@@ -9,7 +9,7 @@ use std::{
 
 use crate::parser::{
     AstNode, CmpOp, Decl, DeclKind, EqOp, Expr, ExprKind, FactorOp, ForBegin, FunDecl, Primary,
-    Stmt, StmtKind, TermOp, UnaryOp, VarDecl,
+    Stmt, StmtKind, TermOp, UnaryOp, VarDecl, CONSTRUCTOR_FN_NAME,
 };
 
 #[derive(Debug)]
@@ -115,7 +115,6 @@ pub enum Value<'src> {
     Map(Map<'src>),
 }
 
-const CONSTRUCTOR_FN_NAME: &'static str = "init";
 
 impl<'src> Value<'src> {
     fn call<T: Write>(

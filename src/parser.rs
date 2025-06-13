@@ -428,6 +428,7 @@ pub enum ErrorKind<'src> {
     InvalidReturn,
     InvalidAssignmentTarget,
     CannotUseThisOutsideOfClass,
+    CannotReturnFromInit,
 }
 
 impl Display for ErrorKind<'_> {
@@ -442,11 +443,12 @@ impl Display for ErrorKind<'_> {
                 f.write_str("Can't read local variable in its own initializer.")
             }
             Self::DuplicateVariable => {
-                f.write_str("Already a variable with this name in this scope")
+                f.write_str("Already a variable with this name in this scope.")
             }
             Self::InvalidReturn => f.write_str("Can't return from top-level code."),
             Self::InvalidAssignmentTarget => f.write_str("Invalid assignment target."),
-            Self::CannotUseThisOutsideOfClass => f.write_str("Can't use 'this' outside of class"),
+            Self::CannotUseThisOutsideOfClass => f.write_str("Can't use 'this' outside of class."),
+            Self::CannotReturnFromInit => f.write_str("Can't return a value from an initializer."),
         }
     }
 }
@@ -486,10 +488,19 @@ type Result<'src, T> = std::result::Result<T, Error<'src>>;
 type AcceptToken<'src> = Option<Token<'src>>;
 type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
 
-#[derive(Clone, Copy)]
+pub const CONSTRUCTOR_FN_NAME: &'static str = "init";
+
+#[derive(PartialEq)]
+enum FnType {
+    Fn,
+    Method,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 enum Declaring<'src> {
     Var(&'src str),
-    Class(&'src str),
+    Class,
+    InitMethod,
 }
 
 /// Parses the lox programming language using a recursive descent approach based on Lox's grammar rules
@@ -690,6 +701,7 @@ impl<'src> Parser<'src> {
                 Ok(StmtKind::Print(expr).into_ast(line_pos))
             }
             Some(Token::Keyword(Keyword::Return)) => {
+                let idx_at_return = self.pos() - 1;
                 // returnStmt     → "return" expression? ";" ;
                 if self.fn_count == 0 {
                     self.prev().unwrap();
@@ -698,6 +710,17 @@ impl<'src> Parser<'src> {
 
                 let expr = self.parse_expr().ok();
                 self.expect_after(Token::Semicolon, "return value")?;
+                if expr.is_some()
+                    && self
+                        .declaring
+                        .borrow()
+                        .iter()
+                        .find(|d| **d == Declaring::InitMethod)
+                        .is_some()
+                {
+                    self.idx.set(idx_at_return);
+                    return self.err(ErrorKind::CannotReturnFromInit);
+                }
 
                 Ok(StmtKind::Return(expr).into_ast(line_pos))
             }
@@ -858,7 +881,7 @@ impl<'src> Parser<'src> {
         let maybe_decl = match self.next() {
             Some(Token::Keyword(Keyword::Class)) => self.parse_class_decl(),
             Some(Token::Keyword(Keyword::Fun)) => self
-                .parse_fun_decl("function")
+                .parse_fun_decl(FnType::Fn)
                 .map(DeclKind::Fun)
                 .map(|d| d.into_ast(line_pos)),
             Some(Token::Keyword(Keyword::Var)) => self
@@ -901,10 +924,10 @@ impl<'src> Parser<'src> {
         self.expect_custom(Token::LeftBrace, "before class body")?;
 
         let mut methods = Vec::new();
-        self.declaring.borrow_mut().push(Declaring::Class(name));
+        self.declaring.borrow_mut().push(Declaring::Class);
 
         while !matches!(self.peek(), Some(Token::RightBrace) | None) {
-            methods.push(self.parse_fun_decl("method")?)
+            methods.push(self.parse_fun_decl(FnType::Method)?)
         }
 
         self.declaring.borrow_mut().pop().unwrap();
@@ -951,8 +974,12 @@ impl<'src> Parser<'src> {
 
     /// funDecl        → "fun" function ;
     /// function       → IDENTIFIER "(" parameters? ")" block ;
-    fn parse_fun_decl(&mut self, name: &'static str) -> Result<'src, FunDecl<'src>> {
+    fn parse_fun_decl(&mut self, ty: FnType) -> Result<'src, FunDecl<'src>> {
         let Some(Token::Identifier(name)) = self.next() else {
+            let name = match ty {
+                FnType::Method => "method",
+                FnType::Fn => "function",
+            };
             return self.custom_err(format!("{name} name"));
         };
 
@@ -963,7 +990,20 @@ impl<'src> Parser<'src> {
         self.expect_after(Token::RightParen, "parameters")?;
         self.expect_custom(Token::LeftBrace, "before function body")?;
         self.fn_count += 1;
-        let body = self.parse_block(Some(HashSet::from_iter(params.iter().copied())))?;
+        let is_init_method = ty == FnType::Method && name == CONSTRUCTOR_FN_NAME;
+        if is_init_method {
+            self.declaring.borrow_mut().push(Declaring::InitMethod);
+        };
+
+        let body = match self.parse_block(Some(HashSet::from_iter(params.iter().copied()))) {
+            Ok(o) => o,
+            Err(e) => {
+                if is_init_method {
+                    self.declaring.borrow_mut().pop().unwrap();
+                }
+                return Err(e);
+            }
+        };
         self.fn_count -= 1;
 
         self.defined_vars_in_scope.insert(name);
@@ -1252,7 +1292,7 @@ impl<'src> Parser<'src> {
                     .declaring
                     .borrow()
                     .iter()
-                    .find(|d| matches!(d, Declaring::Class(..)))
+                    .find(|d| **d == Declaring::Class)
                     .is_some()
                 {
                     return Ok(ExprKind::This.into_ast(line_pos));
