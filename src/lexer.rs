@@ -126,22 +126,18 @@ impl<'src> Lexer<'src> {
                         let c = chars.peek();
                         match (matched_decimal_point, c) {
                             (false, Some((_, '0'..='9' | '.'))) | (true, Some((_, '0'..='9'))) => {
-                                eprintln!("matched num or first dec {c:?}");
                                 let next = chars.next().unwrap();
                                 if next.1 == '.' {
-                                    eprintln!("was decimal");
                                     matched_decimal_point = true;
                                 }
                                 end_idx += 1;
                             }
                             (true, Some((_, '.'))) => {
-                                eprintln!("matched another dot {c:?}");
                                 add_error!(Error::UnexpectedCharacter(c.unwrap().1));
                                 chars.next().unwrap();
                                 break None;
                             }
                             _ => {
-                                eprintln!("num done");
                                 let float_str_repr = &src[start_idx..end_idx];
                                 let float = float_str_repr.parse().unwrap();
                                 break Some(Token::Number(float, float_str_repr));

@@ -378,7 +378,7 @@ fn basic_fn_with_early_return() {
 
 #[test]
 fn fib() {
-    assert_program_stdout!{
+    assert_program_stdout! {
       "
         fun fib(n) {
           if (n < 2) return n;
@@ -624,9 +624,8 @@ fn reassign_parameter() {
 
 #[test]
 fn timer() {
-
-  assert_program_stdout!{
-    r#"
+    assert_program_stdout! {
+      r#"
         var startTime = clock();
         var lastCheck = startTime;
         var running = true;
@@ -641,9 +640,9 @@ fn timer() {
           }
         }
     "#,
-    "Starting timer for 0.2 seconds",
-    "Timer ended"
-  }
+      "Starting timer for 0.2 seconds",
+      "Timer ended"
+    }
 }
 
 #[test]
@@ -871,7 +870,66 @@ fn this_undefined_property() {
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let err = executor.run().unwrap_err();
-    
-    assert!(matches!(err.kind(), ErrorKind::UndefinedProperty("feeling")));
 
+    assert!(matches!(
+        err.kind(),
+        ErrorKind::UndefinedProperty("feeling")
+    ));
+}
+
+#[test]
+fn basic_constructor() {
+    assert_program_stdout! {
+        r#"
+
+        class Default {
+          // this is the constructor
+          init() {
+            // it should be able to set
+            // properties on the instance
+            this.x = "quz";
+            this.y = 35;
+          }
+        }
+        
+        // the constructor should be called
+        // automatically  when the class is being
+        // instantiated
+        print Default().x;
+        print Default().y;
+
+            "#,
+
+        "quz",
+        "35"
+    }
+}
+
+#[test]
+fn basic_constructor_2() {
+    assert_program_stdout! {
+        r#"
+        class Counter {
+          init(startValue) {
+            if (startValue < 0) {
+              print "startValue can't be negative";
+              this.count = 0;
+            } else {
+              this.count = startValue;
+            }
+          }
+        }
+        
+        // constructor is called automatically here
+        var instance = Counter(-43);
+        print instance.count;
+        
+        // it should be possible to call the constructor
+        // on a class instance as well
+        print instance.init(43).count;
+        "#,
+        "startValue can't be negative",
+        "0",
+        "43"
+    }
 }

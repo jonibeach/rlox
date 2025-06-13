@@ -87,19 +87,26 @@ pub struct FunDef<'src> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Class<'src> {
-    name: &'src str,
-    parent: Option<Box<Self>>,
-    methods: Rc<RefCell<Map<'src>>>,
+pub struct FnVal<'src> {
+    def: FunDef<'src>,
+    env: Rc<RefCell<Environment<'src>>>,
+    is_constructor: bool,
 }
 
 type Map<'src> = HashMap<&'src str, (usize, Rc<RefCell<Value<'src>>>)>;
 
 #[derive(Debug, Clone)]
+pub struct Class<'src> {
+    name: &'src str,
+    parent: Option<Box<Self>>,
+    methods: HashMap<&'src str, FnVal<'src>>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Value<'src> {
     Primary(Primary<'src>),
     NativeFunction(fn() -> Value<'src>),
-    Function(FunDef<'src>, Rc<RefCell<Environment<'src>>>),
+    Function(FnVal<'src>),
     Class(Class<'src>),
     ClassInstance {
         c: Class<'src>,
@@ -107,6 +114,8 @@ pub enum Value<'src> {
     },
     Map(Map<'src>),
 }
+
+const CONSTRUCTOR_FN_NAME: &'static str = "init";
 
 impl<'src> Value<'src> {
     fn call<T: Write>(
@@ -116,12 +125,13 @@ impl<'src> Value<'src> {
     ) -> Result<'src, Rc<RefCell<Self>>> {
         match self {
             Self::NativeFunction(f) => Ok(Rc::new(f().into())),
-            Self::Function(
-                FunDef {
+            Self::Function(FnVal {
+                def: FunDef {
                     pos, params, body, ..
                 },
                 env,
-            ) => {
+                is_constructor,
+            }) => {
                 let got = args.len();
                 let expected = params.len();
                 if got != expected {
@@ -144,7 +154,17 @@ impl<'src> Value<'src> {
                 }
 
                 let ret = match executor.eval_decls(*body) {
-                    Ok(..) => Rc::new(RefCell::new(Primary::Nil.into())),
+                    Ok(..) => {
+                        if *is_constructor {
+                            executor
+                                .environment
+                                .borrow()
+                                .resolve_this(&executor)
+                                .unwrap()
+                        } else {
+                            Rc::new(Value::Primary(Primary::Nil).into())
+                        }
+                    }
                     Err(Error {
                         kind: ErrorKind::Return(ret),
                         ..
@@ -160,32 +180,32 @@ impl<'src> Value<'src> {
                     props: Rc::new(HashMap::new().into()),
                 }));
 
-                for (name, (pos, m)) in class.methods.borrow().iter() {
-                    // We wan't our own instance of the methods for each class instance
-                    let m = m.borrow().clone();
+                let mut args = Some(args);
 
-                    let method_with_this = match m {
-                        Value::Function(def, env) => {
-                            let mut env = env.borrow().clone();
-                            env.this = Some(Rc::clone(&instance));
-                            Value::Function(def, Rc::new(env.into()))
+                for (name, m) in class.methods.iter() {
+                    // We wan't our own instance of the methods for each class instance
+                    let mut m = m.clone();
+                    let is_constructor = *name == CONSTRUCTOR_FN_NAME;
+                    m.is_constructor = is_constructor;
+
+                    let mut env = m.env.borrow().clone();
+                    env.this = Some(Rc::clone(&instance));
+                    m.env = Rc::new(env.into());
+                    let method_with_this = Value::Function(m);
+
+                    if is_constructor {
+                        if let Some(args) = args.take() {
+                            method_with_this.call(args, executor)?;
                         }
-                        _ => unreachable!(),
-                    };
+                    }
 
                     match &*instance.borrow() {
                         Self::ClassInstance { props, .. } => {
                             props
                                 .borrow_mut()
-                                .insert(name, (*pos, Rc::new(method_with_this.into())));
+                                .insert(name, (0, Rc::new(method_with_this.into())));
                         }
                         _ => unreachable!(),
-                    }
-                }
-
-                if let Self::ClassInstance { props, .. } = &*instance.borrow() {
-                    if let Some((_, init)) = props.borrow().get("init") {
-                        init.borrow().call(args, executor)?;
                     }
                 }
 
@@ -262,7 +282,10 @@ impl Display for Value<'_> {
         match self {
             Self::Primary(p) => write!(f, "{p}"),
             Self::NativeFunction(..) => write!(f, "<native fn>"),
-            Self::Function(FunDef { name, .. }, _) => {
+            Self::Function(FnVal {
+                def: FunDef { name, .. },
+                ..
+            }) => {
                 write!(f, "<fn {name}>")
             }
             Self::Class(Class { name, .. }) => write!(f, "{name}"),
@@ -452,15 +475,16 @@ impl<'src, T: Write> Executor<'src, T> {
     fn get_fun_value(&self, decl: &'src FunDecl<'src>) -> Rc<RefCell<Value<'src>>> {
         let FunDecl { name, params, body } = decl;
         Rc::new(
-            Value::Function(
-                FunDef {
+            Value::Function(FnVal {
+                def: FunDef {
                     pos: self.pos.get(),
                     name,
                     params,
                     body: body.kind().decls(),
                 },
-                Rc::clone(&self.environment),
-            )
+                env: Rc::clone(&self.environment),
+                is_constructor: false,
+            })
             .into(),
         )
     }
@@ -476,50 +500,30 @@ impl<'src, T: Write> Executor<'src, T> {
             }
             DeclKind::Var(v) => self.eval_var_decl(v)?,
             DeclKind::Fun(decl) => {
-                let pos = self.pos.get();
                 self.environment
                     .borrow_mut()
                     .definitions
-                    .insert(decl.name, (pos, self.get_fun_value(decl)));
+                    .insert(decl.name, (self.pos.get(), self.get_fun_value(decl)));
             }
             DeclKind::Class {
                 name,
                 parent: _p,
                 methods,
             } => {
-                let pos = self.pos.get();
-
-                let methods = Rc::new(
-                    methods
-                        .iter()
-                        .map(|m| {
-                            (
-                                m.name,
-                                (
-                                    self.pos.get(),
-                                    Rc::new(
-                                        Value::Function(
-                                            FunDef {
-                                                pos: self.pos.get(),
-                                                name: m.name,
-                                                params: &m.params,
-                                                body: m.body.kind().decls(),
-                                            },
-                                            Rc::clone(&self.environment),
-                                        )
-                                        .into(),
-                                    ),
-                                ),
-                            )
-                        })
-                        .collect::<HashMap<_, _>>()
-                        .into(),
-                );
-
+                let methods = methods
+                    .iter()
+                    .map(|m| (m.name, self.get_fun_value(m)))
+                    .map(
+                        |(name, val)| match Rc::try_unwrap(val).unwrap().into_inner() {
+                            Value::Function(v) => (name, v),
+                            _ => unreachable!(),
+                        },
+                    )
+                    .collect();
                 self.environment.borrow_mut().definitions.insert(
                     name,
                     (
-                        pos,
+                        self.pos.get(),
                         Rc::new(
                             Value::Class(Class {
                                 name,
@@ -630,7 +634,7 @@ impl<'src, T: Write> Executor<'src, T> {
                     let c = self.eval_expr(call)?;
                     let val = self.eval_expr(val)?;
 
-                    c.borrow_mut().set(ident, Rc::clone(&val), self)?;
+                    c.borrow().set(ident, Rc::clone(&val), self)?;
 
                     val
                 }
@@ -638,7 +642,7 @@ impl<'src, T: Write> Executor<'src, T> {
                     let val = self.eval_expr(val)?;
 
                     self.environment
-                        .borrow_mut()
+                        .borrow()
                         .resolve(ident, self)?
                         .replace(val.borrow().clone());
 
