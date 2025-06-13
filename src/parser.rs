@@ -915,6 +915,7 @@ impl<'src> Parser<'src> {
 
         let mut parent = None;
         if let Some(Token::Less) = self.peek() {
+            self.next().unwrap();
             parent = match self.next() {
                 Some(Token::Identifier(i)) => Some(i),
                 _ => return self.custom_err("superclass name"),
