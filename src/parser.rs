@@ -190,11 +190,7 @@ pub enum DeclKind<'src> {
 impl Display for DeclKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Class {
-                name,
-                spr,
-                methods,
-            } => {
+            Self::Class { name, spr, methods } => {
                 write!(f, "(classDecl {name}")?;
                 if let Some(spr) = spr {
                     write!(f, " < {spr}")?;
@@ -430,6 +426,7 @@ pub enum ErrorKind<'src> {
     CannotUseThisOutsideOfClass,
     CannotReturnFromInit,
     CantInherintFromItself,
+    InvalidSuperUsage { inside_class: bool },
 }
 
 impl Display for ErrorKind<'_> {
@@ -450,7 +447,16 @@ impl Display for ErrorKind<'_> {
             Self::InvalidAssignmentTarget => f.write_str("Invalid assignment target."),
             Self::CannotUseThisOutsideOfClass => f.write_str("Can't use 'this' outside of class."),
             Self::CannotReturnFromInit => f.write_str("Can't return a value from an initializer."),
-            Self::CantInherintFromItself => f.write_str("A class can't inherit from itself"),
+            Self::CantInherintFromItself => f.write_str("A class can't inherit from itself."),
+            Self::InvalidSuperUsage { inside_class } => write!(
+                f,
+                "Can't use 'super' {}.",
+                if *inside_class {
+                    "in a class with no superclass"
+                } else {
+                    "outside of a class"
+                }
+            ),
         }
     }
 }
@@ -501,7 +507,7 @@ enum FnType {
 #[derive(Clone, Copy, PartialEq)]
 enum Declaring<'src> {
     Var(&'src str),
-    Class,
+    Class { has_super: bool },
     InitMethod,
 }
 
@@ -931,7 +937,9 @@ impl<'src> Parser<'src> {
         self.expect_custom(Token::LeftBrace, "before class body")?;
 
         let mut methods = Vec::new();
-        self.declaring.borrow_mut().push(Declaring::Class);
+        self.declaring.borrow_mut().push(Declaring::Class {
+            has_super: spr.is_some(),
+        });
 
         while !matches!(self.peek(), Some(Token::RightBrace) | None) {
             methods.push(self.parse_fun_decl(FnType::Method)?)
@@ -943,12 +951,7 @@ impl<'src> Parser<'src> {
 
         self.defined_vars_in_scope.insert(name);
 
-        Ok(DeclKind::Class {
-            name,
-            spr,
-            methods,
-        }
-        .into_ast(line_pos))
+        Ok(DeclKind::Class { name, spr, methods }.into_ast(line_pos))
     }
 
     // parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
@@ -1305,7 +1308,7 @@ impl<'src> Parser<'src> {
                     .declaring
                     .borrow()
                     .iter()
-                    .any(|d| *d == Declaring::Class)
+                    .any(|d| matches!(d, Declaring::Class { .. }))
                 {
                     return Ok(ExprKind::This.into_ast(line_pos));
                 } else {
@@ -1314,12 +1317,29 @@ impl<'src> Parser<'src> {
                 }
             }
             Some(Token::Keyword(Keyword::Super)) => {
-                self.expect_after_token(Token::Dot)?;
-                let Some(Token::Identifier(method)) = self.next() else {
-                    return self.custom_err("superclass method name");
-                };
+                let declaring = self.declaring.borrow();
+                let declaring_class = declaring
+                    .iter()
+                    .find(|d| matches!(d, Declaring::Class { .. }));
 
-                return Ok(ExprKind::Super(method).into_ast(line_pos));
+                match declaring_class {
+                    Some(Declaring::Class { has_super: true }) => {
+                        self.expect_after_token(Token::Dot)?;
+                        let Some(Token::Identifier(method)) = self.next() else {
+                            return self.custom_err("superclass method name");
+                        };
+
+                        return Ok(ExprKind::Super(method).into_ast(line_pos));
+                    }
+                    Some(Declaring::Class { .. }) => {
+                        return self.err(ErrorKind::InvalidSuperUsage { inside_class: true })
+                    }
+                    _ => {
+                        return self.err(ErrorKind::InvalidSuperUsage {
+                            inside_class: false,
+                        })
+                    }
+                }
             }
             Some(Token::Identifier(i)) => {
                 let curr_defining_this_var = self
