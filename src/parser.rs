@@ -1016,6 +1016,10 @@ impl<'src> Parser<'src> {
         };
         self.fn_count -= 1;
 
+        if is_init_method {
+            self.declaring.borrow_mut().pop().unwrap();
+        }
+
         self.defined_vars_in_scope.insert(name);
 
         let params = params.into_iter().collect();

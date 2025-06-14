@@ -936,8 +936,7 @@ fn basic_constructor_2() {
 
 #[test]
 fn basic_inherited_methods() {
-
-    assert_program_stdout!{
+    assert_program_stdout! {
         r#"
         class foo {
           infoo() {
@@ -966,5 +965,78 @@ fn basic_inherited_methods() {
         "from foo",
         "from hello",
         "from world"
+    }
+}
+
+#[test]
+fn basic_method_overriding() {
+    assert_program_stdout! {
+        r#"
+        class A {
+          method() {
+            print "A method";
+          }
+        }
+        
+        
+        // B inherits method `method` from A
+        // and overrides it with a new implementation
+        class B < A {
+          method() {
+            print "B method";
+          }
+        }
+        
+        var b = B();
+        b.method();  // expect: B method
+        "#,
+        "B method"
+    }
+}
+
+
+#[test]
+fn basic_inheritance_with_constructors() {
+
+    assert_program_stdout! {
+        r#"
+        class Base {
+          init(a) {
+            this.a = a;
+          }
+        
+          cook() {
+            return "Base cooking " + this.a;
+          }
+        }
+        
+        class Derived < Base {
+          init(a, b) {
+            this.a = a;
+            this.b = b;
+          }
+        
+          // Derived overrides the cook method of Base
+          cook() {
+            return "Derived cooking " + this.b + " with "
+            + this.a + " and " + this.b;
+          }
+        
+          makeFood() {
+            return this.cook();
+          }
+        }
+        
+        var derived = Derived("onions", "shallots");
+        print derived.a;
+        print derived.b;
+        
+        print Base("ingredient").cook();
+        print derived.cook();
+        "#,
+        "onions",
+        "shallots",
+        "Base cooking ingredient",
+        "Derived cooking shallots with onions and shallots"
     }
 }

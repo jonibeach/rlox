@@ -176,7 +176,7 @@ impl<'src> Value<'src> {
             }
             Self::Class(class) => {
                 let instance = Rc::new(RefCell::new(Self::ClassInstance {
-                    c: class.clone(),
+                    c: Rc::clone(class),
                     props: Rc::new(HashMap::new().into()),
                 }));
 
@@ -194,6 +194,17 @@ impl<'src> Value<'src> {
 
                 for class in class_hierarchy {
                     for (name, m) in class.methods.iter() {
+                        // We are looping from child class up the inheritance tree
+                        // So we prefer the methods from child classes
+                        // To enable method overriding
+                        
+                        match &*instance.borrow() {
+                            Self::ClassInstance { props, ..} => if props.borrow().contains_key(name) {
+                                continue
+                            },
+                            _ => unreachable!()
+                        };
+
                         // We want our own instance of the methods for each class instance
                         let mut m = m.clone();
                         let is_constructor = *name == CONSTRUCTOR_FN_NAME;
