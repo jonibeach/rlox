@@ -381,7 +381,10 @@ fn class_prop_assign() {
     let program = parser.parse().unwrap();
     let mut decls = program.decls().iter();
 
-    assert_eq!(format!("{}", decls.next().unwrap()), "(classDecl Test (methods))");
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(classDecl Test (methods))"
+    );
     assert_eq!(
         format!("{}", decls.next().unwrap()),
         "(varDecl x (call (ident Test)))"
@@ -422,7 +425,10 @@ fn class_methods() {
     let program = parser.parse().unwrap();
     let mut decls = program.decls().iter();
 
-    assert_eq!(format!("{}", decls.next().unwrap()), "(classDecl Robot (methods (funDecl beep (block (print Beep boop!)))))");
+    assert_eq!(
+        format!("{}", decls.next().unwrap()),
+        "(classDecl Robot (methods (funDecl beep (block (print Beep boop!)))))"
+    );
     assert_eq!(
         format!("{}", decls.next().unwrap()),
         "(varDecl r2d2 (call (ident Robot)))"

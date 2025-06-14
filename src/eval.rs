@@ -20,7 +20,6 @@ pub enum ErrorKind<'src> {
     UndefinedVariable(&'src str),
     UndefinedProperty(&'src str),
     OnlyClassesHaveProperties,
-    StackOverflow,
     NotCallable,
     IncorrectArgCount { got: usize, expected: usize },
     SuperClassMustBeAClass,
@@ -62,13 +61,12 @@ impl Display for Error<'_> {
             ErrorKind::UndefinedProperty(p) => {
                 format!("Undefined property '{p}'.")
             }
-            ErrorKind::OnlyClassesHaveProperties => format!("Only classes have properties"),
+            ErrorKind::OnlyClassesHaveProperties => "Only classes have properties".into(),
             ErrorKind::NotCallable => "Can only call functions and classes".into(),
             ErrorKind::IncorrectArgCount { got, expected } => {
                 format!("Expected {expected} arguments but got {got}.")
             }
             ErrorKind::SuperClassMustBeAClass => "Superclass must be a class".into(),
-            ErrorKind::StackOverflow => "Stack overflow.".into(),
             ErrorKind::Io(..) => "IO error".into(),
             ErrorKind::Return(ref r) => format!("Return {}", r.borrow()),
         };
@@ -100,7 +98,7 @@ type Map<'src> = HashMap<&'src str, (usize, Rc<RefCell<Value<'src>>>)>;
 #[derive(Debug, Clone)]
 pub struct Class<'src> {
     name: &'src str,
-    parent: Option<Rc<Self>>,
+    spr: Option<Rc<Self>>,
     methods: HashMap<&'src str, FnVal<'src>>,
 }
 
@@ -126,12 +124,20 @@ impl<'src> Value<'src> {
         match self {
             Self::NativeFunction(f) => Ok(Rc::new(f().into())),
             Self::Function(FnVal {
-                def: FunDef {
-                    pos, params, body, ..
-                },
+                def:
+                    FunDef {
+                        pos,
+                        params,
+                        body,
+                        name,
+                    },
                 env,
                 is_constructor,
             }) => {
+                eprintln!(
+                    "CALLING {name} SPR {:?}",
+                    env.borrow().spr.as_ref().map(|spr| spr.name)
+                );
                 let got = args.len();
                 let expected = params.len();
                 if got != expected {
@@ -153,14 +159,10 @@ impl<'src> Value<'src> {
                         .insert(p, (*pos, arg));
                 }
 
-                let ret = match executor.eval_decls(*body) {
+                let ret = match executor.eval_decls(body) {
                     Ok(..) => {
                         if *is_constructor {
-                            executor
-                                .environment
-                                .borrow()
-                                .resolve_this(&executor)
-                                .unwrap()
+                            executor.environment.borrow().resolve_this()
                         } else {
                             Rc::new(Value::Primary(Primary::Nil).into())
                         }
@@ -180,56 +182,40 @@ impl<'src> Value<'src> {
                     props: Rc::new(HashMap::new().into()),
                 }));
 
-                let mut args = Some(args);
-                let mut class_hierarchy = Vec::new();
+                let mut constructor = None;
 
-                {
-                    let mut class_helper = Some(class);
+                for (name, m) in class.methods.iter() {
+                    // We want our own instance of the methods for each class instance
+                    let mut m = m.clone();
+                    let is_constructor = *name == CONSTRUCTOR_FN_NAME;
+                    m.is_constructor = is_constructor;
 
-                    while let Some(c) = class_helper {
-                        class_hierarchy.push(c);
-                        class_helper = c.parent.as_ref();
+                    let mut env = m.env.borrow().clone();
+                    env.this = Some(Rc::clone(&instance));
+                    m.env = Rc::new(env.into());
+                    let method_with_this = Value::Function(m);
+                    let method_with_this = Rc::new(method_with_this.into());
+
+                    if is_constructor {
+                        constructor = Some(Rc::clone(&method_with_this));
                     }
+
+                    match &*instance.borrow() {
+                        Self::ClassInstance { props, .. } => {
+                            props.borrow_mut().insert(name, (0, method_with_this))
+                        }
+
+                        _ => unreachable!(),
+                    };
                 }
 
-                for class in class_hierarchy {
-                    for (name, m) in class.methods.iter() {
-                        // We are looping from child class up the inheritance tree
-                        // So we prefer the methods from child classes
-                        // To enable method overriding
-                        
-                        match &*instance.borrow() {
-                            Self::ClassInstance { props, ..} => if props.borrow().contains_key(name) {
-                                continue
-                            },
-                            _ => unreachable!()
-                        };
-
-                        // We want our own instance of the methods for each class instance
-                        let mut m = m.clone();
-                        let is_constructor = *name == CONSTRUCTOR_FN_NAME;
-                        m.is_constructor = is_constructor;
-
-                        let mut env = m.env.borrow().clone();
-                        env.this = Some(Rc::clone(&instance));
-                        m.env = Rc::new(env.into());
-                        let method_with_this = Value::Function(m);
-
-                        if is_constructor {
-                            if let Some(args) = args.take() {
-                                method_with_this.call(args, executor)?;
-                            }
-                        }
-
-                        match &*instance.borrow() {
-                            Self::ClassInstance { props, .. } => {
-                                props
-                                    .borrow_mut()
-                                    .insert(name, (0, Rc::new(method_with_this.into())));
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
+                if let Some(constructor) = constructor {
+                    constructor.borrow().call(args, executor)?;
+                } else if args.len() != 0 {
+                    return executor.err(ErrorKind::IncorrectArgCount {
+                        got: args.len(),
+                        expected: 0,
+                    });
                 }
 
                 Ok(instance)
@@ -323,6 +309,7 @@ pub struct Environment<'src> {
     /// `None` when the environment has no parent. Ie. the global environment
     parent: Option<Rc<RefCell<Self>>>,
     this: Option<Rc<RefCell<Value<'src>>>>,
+    spr: Option<Rc<Class<'src>>>,
     definitions: HashMap<&'src str, (usize, Rc<RefCell<Value<'src>>>)>,
 }
 
@@ -345,19 +332,46 @@ impl<'src> Environment<'src> {
         executor.err(ErrorKind::UndefinedVariable(ident))
     }
 
-    fn resolve_this<T: Write>(
+    fn resolve_this(&self) -> Rc<RefCell<Value<'src>>> {
+        if let Some(this) = &self.this {
+            return Rc::clone(this);
+        }
+
+        return self.parent
+            .as_ref()
+            .expect("bug: this wasn't defined in current env, so there must be a parent env where its defined, but the parent wasn't defined")
+            .borrow()
+            .resolve_this();
+    }
+
+    fn resolve_super<T: Write>(
         &self,
         executor: &Executor<'src, T>,
+        method: &'src str,
     ) -> Result<'src, Rc<RefCell<Value<'src>>>> {
-        if let Some(this) = &self.this {
-            return Ok(Rc::clone(this));
-        }
+        if let Some(spr) = &self.spr {
+            eprintln!(
+                "HAS SPR {} {:?} GETTING {}",
+                spr.name,
+                spr.methods.keys().collect::<Vec<_>>(),
+                method
+            );
+            if let Some(method) = spr.methods.get(method) {
+                eprintln!(
+                    "SPR METHOD HAS SPR: {:?}",
+                    method.env.borrow().spr.as_ref().map(|p| p.name)
+                );
+                return Ok(Rc::new(Value::Function(method.clone()).into()));
+            }
 
-        if let Some(p) = &self.parent {
-            return p.borrow().resolve_this(executor);
-        }
+            return executor.err(ErrorKind::UndefinedProperty(method));
+        };
 
-        todo!()
+        self.parent
+            .as_ref()
+            .expect("bug: super wasn't defined in current env, so there must be a parent env where its defined, but the parent wasn't defined")
+            .borrow()
+            .resolve_super(executor, method)
     }
 }
 
@@ -399,6 +413,7 @@ impl<'src, T: Write> Executor<'src, T> {
                 Environment {
                     parent: None,
                     this: None,
+                    spr: None,
                     definitions: globals,
                 }
                 .into(),
@@ -469,6 +484,7 @@ impl<'src, T: Write> Executor<'src, T> {
             Environment {
                 parent: Some(Rc::clone(&parent)),
                 this: None,
+                spr: None,
                 definitions: HashMap::new(),
             }
             .into(),
@@ -492,21 +508,27 @@ impl<'src, T: Write> Executor<'src, T> {
         Ok(())
     }
 
-    fn get_fun_value(&self, decl: &'src FunDecl<'src>) -> Rc<RefCell<Value<'src>>> {
+    fn get_fun_value(&self, decl: &'src FunDecl<'src>) -> FnVal<'src> {
         let FunDecl { name, params, body } = decl;
-        Rc::new(
-            Value::Function(FnVal {
-                def: FunDef {
-                    pos: self.pos.get(),
-                    name,
-                    params,
-                    body: body.kind().decls(),
-                },
-                env: Rc::clone(&self.environment),
-                is_constructor: false,
-            })
-            .into(),
-        )
+        let parent = Some(Rc::clone(&self.environment));
+        FnVal {
+            def: FunDef {
+                pos: self.pos.get(),
+                name,
+                params,
+                body: body.kind().decls(),
+            },
+            env: Rc::new(
+                Environment {
+                    definitions: HashMap::new(),
+                    parent,
+                    this: None,
+                    spr: None,
+                }
+                .into(),
+            ),
+            is_constructor: false,
+        }
     }
 
     fn eval_decl(&self, decl: &'src Decl<'src>) -> Result<'src, ()> {
@@ -520,50 +542,80 @@ impl<'src, T: Write> Executor<'src, T> {
             }
             DeclKind::Var(v) => self.eval_var_decl(v)?,
             DeclKind::Fun(decl) => {
-                self.environment
-                    .borrow_mut()
-                    .definitions
-                    .insert(decl.name, (self.pos.get(), self.get_fun_value(decl)));
+                self.environment.borrow_mut().definitions.insert(
+                    decl.name,
+                    (
+                        self.pos.get(),
+                        Rc::new(Value::Function(self.get_fun_value(decl)).into()),
+                    ),
+                );
             }
-            DeclKind::Class {
-                name,
-                parent,
-                methods,
-            } => {
-                let methods = methods
-                    .iter()
-                    .map(|m| (m.name, self.get_fun_value(m)))
-                    .map(
-                        |(name, val)| match Rc::try_unwrap(val).unwrap().into_inner() {
-                            Value::Function(v) => (name, v),
-                            _ => unreachable!(),
-                        },
-                    )
-                    .collect();
-                let parent = match parent {
-                    Some(parent) => {
-                        let parent = self.environment.borrow().resolve(parent, self)?;
-                        let parent = parent.borrow();
+            DeclKind::Class { name, spr, methods } => {
+                let spr = match spr {
+                    Some(spr) => {
+                        let spr = self.environment.borrow().resolve(spr, self)?;
+                        let spr = spr.borrow();
 
-                        match &*parent {
+                        match &*spr {
                             Value::Class(c) => Some(Rc::clone(c)),
                             _ => return self.err(ErrorKind::SuperClassMustBeAClass),
                         }
                     }
                     None => None,
                 };
+
+                let mut class_hierarchy = Vec::new();
+
+                {
+                    let mut spr_helper = &spr;
+
+                    while let Some(c) = spr_helper {
+                        class_hierarchy.push(c);
+                        spr_helper = &c.spr;
+                    }
+                }
+
+                let mut methods: HashMap<_, _> = methods
+                    .iter()
+                    .map(|decl| {
+                        let val = self.get_fun_value(decl);
+
+                        eprintln!(
+                            "SETTING FN {} ON CLASS {name} TO HAVE SPR {:?}",
+                            decl.name,
+                            spr.as_ref().map(|p| p.name)
+                        );
+
+                        val.env.borrow_mut().spr = spr.as_ref().map(Rc::clone);
+
+                        (decl.name, val)
+                    })
+                    .collect();
+
+                for c in class_hierarchy {
+                    for (method_name, val) in &c.methods {
+                        // We are looping from child class up the inheritance tree
+                        // So we prefer the methods from child classes
+                        // To enable method overriding
+                        if methods.contains_key(method_name) {
+                            continue;
+                        }
+
+                        eprintln!("ADDING METHOD {} FROM {} TO {}", method_name, c.name, name);
+                        eprintln!(
+                            "ADDED METHOD HAS SPR {:?}",
+                            val.env.borrow().spr.as_ref().map(|s| s.name)
+                        );
+
+                        methods.insert(method_name, val.clone());
+                    }
+                }
+
                 self.environment.borrow_mut().definitions.insert(
                     name,
                     (
                         self.pos.get(),
-                        Rc::new(
-                            Value::Class(Rc::new(Class {
-                                name,
-                                parent,
-                                methods,
-                            }))
-                            .into(),
-                        ),
+                        Rc::new(Value::Class(Rc::new(Class { name, spr, methods })).into()),
                     ),
                 );
             }
@@ -790,8 +842,8 @@ impl<'src, T: Write> Executor<'src, T> {
             }
             ExprKind::Group(i) => self.eval_expr(i)?,
             ExprKind::Primary(p) => Rc::new(RefCell::new(p.clone().into())),
-            ExprKind::This => self.environment.borrow().resolve_this(self)?,
-            ExprKind::Super(..) => todo!(),
+            ExprKind::This => self.environment.borrow().resolve_this(),
+            ExprKind::Super(method) => self.environment.borrow().resolve_super(self, method)?,
         };
 
         Ok(v)

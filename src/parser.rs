@@ -178,7 +178,7 @@ impl Display for FunDecl<'_> {
 pub enum DeclKind<'src> {
     Class {
         name: &'src str,
-        parent: Option<&'src str>,
+        spr: Option<&'src str>,
         methods: Vec<FunDecl<'src>>,
     },
     Fun(FunDecl<'src>),
@@ -192,12 +192,12 @@ impl Display for DeclKind<'_> {
         match self {
             Self::Class {
                 name,
-                parent,
+                spr,
                 methods,
             } => {
                 write!(f, "(classDecl {name}")?;
-                if let Some(parent) = parent {
-                    write!(f, " < {parent}")?;
+                if let Some(spr) = spr {
+                    write!(f, " < {spr}")?;
                 }
 
                 write!(f, " (methods")?;
@@ -490,7 +490,7 @@ type Result<'src, T> = std::result::Result<T, Error<'src>>;
 type AcceptToken<'src> = Option<Token<'src>>;
 type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
 
-pub const CONSTRUCTOR_FN_NAME: &'static str = "init";
+pub const CONSTRUCTOR_FN_NAME: &str = "init";
 
 #[derive(PartialEq)]
 enum FnType {
@@ -717,8 +717,7 @@ impl<'src> Parser<'src> {
                         .declaring
                         .borrow()
                         .iter()
-                        .find(|d| **d == Declaring::InitMethod)
-                        .is_some()
+                        .any(|d| *d == Declaring::InitMethod)
                 {
                     self.idx.set(idx_at_return);
                     return self.err(ErrorKind::CannotReturnFromInit);
@@ -843,7 +842,7 @@ impl<'src> Parser<'src> {
     {
         let prev = std::mem::replace(
             &mut self.defined_vars_in_scope,
-            default_declared_vars.unwrap_or_else(|| HashSet::new()),
+            default_declared_vars.unwrap_or_default(),
         );
         let prev_global_scope = self.is_global_scope;
         self.is_global_scope = false;
@@ -915,16 +914,16 @@ impl<'src> Parser<'src> {
             return self.custom_err("class name");
         };
 
-        let mut parent = None;
+        let mut spr = None;
         if let Some(Token::Less) = self.peek() {
             self.next().unwrap();
-            parent = match self.next() {
+            spr = match self.next() {
                 Some(Token::Identifier(i)) => Some(i),
                 _ => return self.custom_err("superclass name"),
             };
         }
 
-        if parent.map(|p| p == name).unwrap_or(false) {
+        if spr.map(|p| p == name).unwrap_or(false) {
             self.prev().unwrap();
             return self.err(ErrorKind::CantInherintFromItself);
         }
@@ -946,7 +945,7 @@ impl<'src> Parser<'src> {
 
         Ok(DeclKind::Class {
             name,
-            parent,
+            spr,
             methods,
         }
         .into_ast(line_pos))
@@ -1075,7 +1074,6 @@ impl<'src> Parser<'src> {
     }
 
     /// expression     → assignment ;
-
     /// assignment     → ( call "." )? IDENTIFIER "=" assignment
     ///                | logic_or ;
     fn parse_expr(&self) -> Result<'src, Expr<'src>> {
@@ -1291,8 +1289,9 @@ impl<'src> Parser<'src> {
         Ok(ExprKind::Group(inner.into()).into_ast(line_pos))
     }
 
-    /// primary        → NUMBER | STRING | "true" | "false" | "nil"
-    ///                 | "(" expression ")" | IDENTIFIER "=" expression
+    /// primary        → "true" | "false" | "nil" | "this"
+    ///              | NUMBER | STRING | IDENTIFIER | "(" expression ")"
+    ///              | "super" "." IDENTIFIER ;
     fn parse_primary(&self) -> Result<'src, Expr<'src>> {
         let line_pos = self.line_pos();
         let ast = match self.next() {
@@ -1306,8 +1305,7 @@ impl<'src> Parser<'src> {
                     .declaring
                     .borrow()
                     .iter()
-                    .find(|d| **d == Declaring::Class)
-                    .is_some()
+                    .any(|d| *d == Declaring::Class)
                 {
                     return Ok(ExprKind::This.into_ast(line_pos));
                 } else {
@@ -1315,13 +1313,20 @@ impl<'src> Parser<'src> {
                     return self.err(ErrorKind::CannotUseThisOutsideOfClass);
                 }
             }
+            Some(Token::Keyword(Keyword::Super)) => {
+                self.expect_after_token(Token::Dot)?;
+                let Some(Token::Identifier(method)) = self.next() else {
+                    return self.custom_err("superclass method name");
+                };
+
+                return Ok(ExprKind::Super(method).into_ast(line_pos));
+            }
             Some(Token::Identifier(i)) => {
                 let curr_defining_this_var = self
                     .declaring
                     .borrow()
                     .iter()
-                    .find(|d| matches!(d, Declaring::Var(decl_i) if *decl_i == i))
-                    .is_some();
+                    .any(|d| matches!(d, Declaring::Var(decl_i) if *decl_i == i));
 
                 if !self.defined_vars_in_scope.contains(i) && curr_defining_this_var {
                     self.prev().unwrap();

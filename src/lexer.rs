@@ -18,7 +18,7 @@ impl<'src> Lexer<'src> {
     }
 
     pub fn without_symbols(&self) -> Vec<Token> {
-        self.tokens().into_iter().map(|t| t.token()).collect()
+        self.tokens().iter().map(|t| t.token()).collect()
     }
 
     pub fn new() -> Self {

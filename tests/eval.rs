@@ -994,10 +994,8 @@ fn basic_method_overriding() {
     }
 }
 
-
 #[test]
 fn basic_inheritance_with_constructors() {
-
     assert_program_stdout! {
         r#"
         class Base {
@@ -1038,5 +1036,75 @@ fn basic_inheritance_with_constructors() {
         "shallots",
         "Base cooking ingredient",
         "Derived cooking shallots with onions and shallots"
+    }
+}
+#[test]
+fn basic_super() {
+    assert_program_stdout! {
+        r#"class A {
+          say() {
+            print "A";
+          }
+        }
+        
+        class B < A {
+          // test calls say() from A
+          test() {
+            super.say();
+          }
+        
+          say() {
+            print "B";
+          }
+        }
+        
+        // C inherits test() from B
+        // But the super keyword used in test()
+        // should still have a binding to B
+        class C < B {
+          say() {
+            print "C";
+          }
+        }
+        
+        C().say();
+        C().test(); // expect: A
+        "#,
+        "C",
+        "A"
+    }
+}
+
+#[test]
+fn nested_super_calls() {
+    assert_program_stdout! {
+        r#"
+        class Base {
+          method() {
+            print "Base.method()";
+          }
+        }
+        
+        // Parent inherits method from Base
+        class Parent < Base {
+          method() {
+            super.method();
+          }
+        }
+        
+        // Child inherits method from Parent
+        class Child < Parent {
+          method() {
+            super.method();
+          }
+        }
+        
+        var parent = Parent();
+        parent.method(); // expect: Base.method()
+        var child = Child();
+        child.method(); // expect: Base.method()
+        "#,
+        "Base.method()",
+        "Base.method()"
     }
 }

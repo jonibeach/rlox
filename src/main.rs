@@ -71,7 +71,6 @@ fn main() {
                     std::process::exit(70)
                 }
             };
-
         }
         "run" => {
             if !lexer.errors().is_empty() {
