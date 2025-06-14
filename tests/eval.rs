@@ -933,3 +933,38 @@ fn basic_constructor_2() {
         "43"
     }
 }
+
+#[test]
+fn basic_inherited_methods() {
+
+    assert_program_stdout!{
+        r#"
+        class foo {
+          infoo() {
+            print "from foo";
+          }
+        }
+        
+        class hello < foo {
+          inhello() {
+            print "from hello";
+          }
+        }
+        
+        class world < hello {
+          inworld() {
+            print "from world";
+          }
+        }
+        
+        // world should inherit the methods
+        // from both foo and hello
+        var world = world();
+        world.infoo();
+        world.inhello();
+        world.inworld();"#,
+        "from foo",
+        "from hello",
+        "from world"
+    }
+}

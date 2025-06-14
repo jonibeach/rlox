@@ -23,6 +23,7 @@ pub enum ErrorKind<'src> {
     StackOverflow,
     NotCallable,
     IncorrectArgCount { got: usize, expected: usize },
+    SuperClassMustBeAClass,
     Return(Rc<RefCell<Value<'src>>>),
     Io(std::io::Error),
 }
@@ -66,6 +67,7 @@ impl Display for Error<'_> {
             ErrorKind::IncorrectArgCount { got, expected } => {
                 format!("Expected {expected} arguments but got {got}.")
             }
+            ErrorKind::SuperClassMustBeAClass => "Superclass must be a class".into(),
             ErrorKind::StackOverflow => "Stack overflow.".into(),
             ErrorKind::Io(..) => "IO error".into(),
             ErrorKind::Return(ref r) => format!("Return {}", r.borrow()),
@@ -98,7 +100,7 @@ type Map<'src> = HashMap<&'src str, (usize, Rc<RefCell<Value<'src>>>)>;
 #[derive(Debug, Clone)]
 pub struct Class<'src> {
     name: &'src str,
-    parent: Option<Box<Self>>,
+    parent: Option<Rc<Self>>,
     methods: HashMap<&'src str, FnVal<'src>>,
 }
 
@@ -107,14 +109,13 @@ pub enum Value<'src> {
     Primary(Primary<'src>),
     NativeFunction(fn() -> Value<'src>),
     Function(FnVal<'src>),
-    Class(Class<'src>),
+    Class(Rc<Class<'src>>),
     ClassInstance {
-        c: Class<'src>,
+        c: Rc<Class<'src>>,
         props: Rc<RefCell<Map<'src>>>,
     },
     Map(Map<'src>),
 }
-
 
 impl<'src> Value<'src> {
     fn call<T: Write>(
@@ -175,36 +176,48 @@ impl<'src> Value<'src> {
             }
             Self::Class(class) => {
                 let instance = Rc::new(RefCell::new(Self::ClassInstance {
-                    c: class.clone(), // We will call the constructor here at some point
+                    c: class.clone(),
                     props: Rc::new(HashMap::new().into()),
                 }));
 
                 let mut args = Some(args);
+                let mut class_hierarchy = Vec::new();
 
-                for (name, m) in class.methods.iter() {
-                    // We wan't our own instance of the methods for each class instance
-                    let mut m = m.clone();
-                    let is_constructor = *name == CONSTRUCTOR_FN_NAME;
-                    m.is_constructor = is_constructor;
+                {
+                    let mut class_helper = Some(class);
 
-                    let mut env = m.env.borrow().clone();
-                    env.this = Some(Rc::clone(&instance));
-                    m.env = Rc::new(env.into());
-                    let method_with_this = Value::Function(m);
-
-                    if is_constructor {
-                        if let Some(args) = args.take() {
-                            method_with_this.call(args, executor)?;
-                        }
+                    while let Some(c) = class_helper {
+                        class_hierarchy.push(c);
+                        class_helper = c.parent.as_ref();
                     }
+                }
 
-                    match &*instance.borrow() {
-                        Self::ClassInstance { props, .. } => {
-                            props
-                                .borrow_mut()
-                                .insert(name, (0, Rc::new(method_with_this.into())));
+                for class in class_hierarchy {
+                    for (name, m) in class.methods.iter() {
+                        // We want our own instance of the methods for each class instance
+                        let mut m = m.clone();
+                        let is_constructor = *name == CONSTRUCTOR_FN_NAME;
+                        m.is_constructor = is_constructor;
+
+                        let mut env = m.env.borrow().clone();
+                        env.this = Some(Rc::clone(&instance));
+                        m.env = Rc::new(env.into());
+                        let method_with_this = Value::Function(m);
+
+                        if is_constructor {
+                            if let Some(args) = args.take() {
+                                method_with_this.call(args, executor)?;
+                            }
                         }
-                        _ => unreachable!(),
+
+                        match &*instance.borrow() {
+                            Self::ClassInstance { props, .. } => {
+                                props
+                                    .borrow_mut()
+                                    .insert(name, (0, Rc::new(method_with_this.into())));
+                            }
+                            _ => unreachable!(),
+                        }
                     }
                 }
 
@@ -287,11 +300,8 @@ impl Display for Value<'_> {
             }) => {
                 write!(f, "<fn {name}>")
             }
-            Self::Class(Class { name, .. }) => write!(f, "{name}"),
-            Self::ClassInstance {
-                c: Class { name, .. },
-                ..
-            } => write!(f, "{name} instance"),
+            Self::Class(c) => write!(f, "{}", c.name),
+            Self::ClassInstance { c, .. } => write!(f, "{} instance", c.name),
             Self::Map(..) => write!(f, "<map>"),
         }
     }
@@ -506,7 +516,7 @@ impl<'src, T: Write> Executor<'src, T> {
             }
             DeclKind::Class {
                 name,
-                parent: _p,
+                parent,
                 methods,
             } => {
                 let methods = methods
@@ -519,16 +529,28 @@ impl<'src, T: Write> Executor<'src, T> {
                         },
                     )
                     .collect();
+                let parent = match parent {
+                    Some(parent) => {
+                        let parent = self.environment.borrow().resolve(parent, self)?;
+                        let parent = parent.borrow();
+
+                        match &*parent {
+                            Value::Class(c) => Some(Rc::clone(c)),
+                            _ => return self.err(ErrorKind::SuperClassMustBeAClass),
+                        }
+                    }
+                    None => None,
+                };
                 self.environment.borrow_mut().definitions.insert(
                     name,
                     (
                         self.pos.get(),
                         Rc::new(
-                            Value::Class(Class {
+                            Value::Class(Rc::new(Class {
                                 name,
-                                parent: None, // TODO: Resolve parent
+                                parent,
                                 methods,
-                            })
+                            }))
                             .into(),
                         ),
                     ),

@@ -429,6 +429,7 @@ pub enum ErrorKind<'src> {
     InvalidAssignmentTarget,
     CannotUseThisOutsideOfClass,
     CannotReturnFromInit,
+    CantInherintFromItself,
 }
 
 impl Display for ErrorKind<'_> {
@@ -449,6 +450,7 @@ impl Display for ErrorKind<'_> {
             Self::InvalidAssignmentTarget => f.write_str("Invalid assignment target."),
             Self::CannotUseThisOutsideOfClass => f.write_str("Can't use 'this' outside of class."),
             Self::CannotReturnFromInit => f.write_str("Can't return a value from an initializer."),
+            Self::CantInherintFromItself => f.write_str("A class can't inherit from itself"),
         }
     }
 }
@@ -922,6 +924,11 @@ impl<'src> Parser<'src> {
             };
         }
 
+        if parent.map(|p| p == name).unwrap_or(false) {
+            self.prev().unwrap();
+            return self.err(ErrorKind::CantInherintFromItself);
+        }
+
         self.expect_custom(Token::LeftBrace, "before class body")?;
 
         let mut methods = Vec::new();
@@ -934,6 +941,8 @@ impl<'src> Parser<'src> {
         self.declaring.borrow_mut().pop().unwrap();
 
         self.expect_custom(Token::RightBrace, "after class body")?;
+
+        self.defined_vars_in_scope.insert(name);
 
         Ok(DeclKind::Class {
             name,
