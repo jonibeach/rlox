@@ -3,6 +3,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     fmt::{Debug, Display},
+    mem,
 };
 
 use crate::{
@@ -386,7 +387,6 @@ pub struct AstNode<K> {
 
 impl<K: Display> Display for AstNode<K> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // write!(f, "[line {}] {}", self.line + 1, self.kind)
         self.kind.fmt(f)
     }
 }
@@ -418,45 +418,58 @@ impl<'src> Program<'src> {
 pub enum ErrorKind<'src> {
     Custom(String),
     TokenAfter(Token<'src>, &'static str),
+    TokenBefore(Token<'src>, &'static str),
     TokenAfterToken(Token<'src>, Token<'src>),
     CantReadLocalVarInOwnInit,
     DuplicateVariable,
     InvalidReturn,
     InvalidAssignmentTarget,
-    CannotUseThisOutsideOfClass,
-    CannotReturnFromInit,
+    CantUseThisOutsideOfClass,
+    CantReturnFromInit,
     CantInherintFromItself,
     InvalidSuperUsage { inside_class: bool },
+    TooManyParameters,
+    TooManyArgs,
 }
 
 impl Display for ErrorKind<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Custom(e) => write!(f, "Expect {e}."),
-            Self::TokenAfter(t, a) => write!(f, "Expect '{}' after {a}.", t.lexeme()),
+            Self::Custom(e) => write!(f, "Expect {e}"),
+            Self::TokenAfter(t, a) => write!(f, "Expect '{}' after {a}", t.lexeme()),
+            Self::TokenBefore(t, a) => write!(f, "Expect '{}' before {a}", t.lexeme()),
             Self::TokenAfterToken(a, b) => {
-                write!(f, "Expect '{}' after '{}'.", a.lexeme(), b.lexeme())
+                write!(f, "Expect '{}' after '{}'", a.lexeme(), b.lexeme())
             }
             Self::CantReadLocalVarInOwnInit => {
-                f.write_str("Can't read local variable in its own initializer.")
+                f.write_str("Can't read local variable in its own initializer")
             }
             Self::DuplicateVariable => {
-                f.write_str("Already a variable with this name in this scope.")
+                f.write_str("Already a variable with this name in this scope")
             }
-            Self::InvalidReturn => f.write_str("Can't return from top-level code."),
-            Self::InvalidAssignmentTarget => f.write_str("Invalid assignment target."),
-            Self::CannotUseThisOutsideOfClass => f.write_str("Can't use 'this' outside of class."),
-            Self::CannotReturnFromInit => f.write_str("Can't return a value from an initializer."),
-            Self::CantInherintFromItself => f.write_str("A class can't inherit from itself."),
+            Self::InvalidReturn => f.write_str("Can't return from top-level code"),
+            Self::InvalidAssignmentTarget => f.write_str("Invalid assignment target"),
+            Self::CantUseThisOutsideOfClass => f.write_str("Can't use 'this' outside of a class"),
+            Self::CantReturnFromInit => f.write_str("Can't return a value from an initializer"),
+            Self::CantInherintFromItself => f.write_str("A class can't inherit from itself"),
             Self::InvalidSuperUsage { inside_class } => write!(
                 f,
-                "Can't use 'super' {}.",
+                "Can't use 'super' {}",
                 if *inside_class {
                     "in a class with no superclass"
                 } else {
                     "outside of a class"
                 }
             ),
+            Self::TooManyParameters | Self::TooManyArgs => {
+                let verb = match self {
+                    Self::TooManyParameters => "parameters",
+                    Self::TooManyArgs => "arguments",
+                    _ => unreachable!(),
+                };
+
+                write!(f, "Can't have more than {MAX_PARAM_COUNT} {verb}")
+            }
         }
     }
 }
@@ -478,7 +491,7 @@ impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "[line {}] Error at {}: {}",
+            "[line {}] Error at {}: {}.",
             self.line + 1,
             if let Some(t) = self.token {
                 format!("'{}'", t.lexeme())
@@ -497,6 +510,7 @@ type AcceptToken<'src> = Option<Token<'src>>;
 type AcceptSymbol<'src> = Option<Symbol<Token<'src>>>;
 
 pub const CONSTRUCTOR_FN_NAME: &str = "init";
+const MAX_PARAM_COUNT: usize = 255;
 
 #[derive(PartialEq)]
 enum FnType {
@@ -508,7 +522,7 @@ enum FnType {
 enum Declaring<'src> {
     Var(&'src str),
     Class { has_super: bool },
-    InitMethod,
+    Fun { is_init: bool },
 }
 
 /// Parses the lox programming language using a recursive descent approach based on Lox's grammar rules
@@ -520,35 +534,21 @@ pub struct Parser<'src> {
     idx: Cell<usize>,
     is_global_scope: bool,
     declaring: RefCell<Vec<Declaring<'src>>>,
-    fn_count: usize,
     defined_vars_in_scope: HashSet<&'src str>,
-    force_ending_semicolon: bool,
     errors: Vec<Error<'src>>,
+    resolver_errors: RefCell<Vec<Error<'src>>>,
 }
 
 impl<'src> Parser<'src> {
-    pub fn no_ending_semicolons(tokens: &'src [Symbol<Token<'src>>]) -> Self {
-        Self {
-            tokens,
-            idx: 0.into(),
-            is_global_scope: true,
-            declaring: Vec::new().into(),
-            fn_count: 0,
-            defined_vars_in_scope: HashSet::new(),
-            force_ending_semicolon: false,
-            errors: Vec::new(),
-        }
-    }
     pub fn new(tokens: &'src [Symbol<Token<'src>>]) -> Self {
         Self {
             tokens,
             idx: 0.into(),
             is_global_scope: true,
-            fn_count: 0,
             declaring: Vec::new().into(),
             defined_vars_in_scope: HashSet::new(),
-            force_ending_semicolon: true,
             errors: Vec::new(),
+            resolver_errors: Vec::new().into(),
         }
     }
 
@@ -625,7 +625,7 @@ impl<'src> Parser<'src> {
         self.accept(token)
             .ok_or(self.err_inner(ErrorKind::TokenAfterToken(
                 token,
-                self.tokens[self.idx.get() - 2].token(),
+                self.tokens[self.idx.get() - 1].token(),
             )))
     }
 
@@ -633,7 +633,21 @@ impl<'src> Parser<'src> {
         self.accept(token)
             .ok_or(self.err_inner(ErrorKind::TokenAfter(token, after)))
     }
+    fn expect_before(&self, token: Token<'src>, before: &'static str) -> Result<'src, Token<'src>> {
+        self.accept(token)
+            .ok_or(self.err_inner(ErrorKind::TokenBefore(token, before)))
+    }
+    fn parse_ident(&self, msg: impl Into<String>) -> Result<'src, &'src str> {
+        let next = self.next();
+        let Some(Token::Identifier(ident)) = next else {
+            if next.is_some() {
+                self.prev().unwrap();
+            }
+            return self.custom_err(msg);
+        };
 
+        Ok(ident)
+    }
     fn recover(&self) {
         while !matches!(self.next(), Some(Token::Semicolon) | None) {
             if let Some(Token::Keyword(
@@ -660,6 +674,19 @@ impl<'src> Parser<'src> {
         }
     }
 
+    fn add_resolver_error_with_idx(&self, kind: ErrorKind<'src>, idx: usize) {
+        let prev = self.idx.get();
+        self.idx.set(idx);
+        self.resolver_errors.borrow_mut().push(self.err_inner(kind));
+        self.idx.set(prev);
+    }
+
+    fn add_resolver_error(&self, kind: ErrorKind<'src>) {
+        self.prev().unwrap();
+        self.resolver_errors.borrow_mut().push(self.err_inner(kind));
+        let _ = self.next();
+    }
+
     fn err<E>(&self, kind: ErrorKind<'src>) -> Result<'src, E> {
         Err(self.err_inner(kind))
     }
@@ -669,7 +696,7 @@ impl<'src> Parser<'src> {
     }
 
     /// program        → declaration* EOF ;
-    pub fn parse(&mut self) -> std::result::Result<Program<'src>, &Vec<Error<'src>>> {
+    pub fn parse(mut self) -> std::result::Result<Program<'src>, Vec<Error<'src>>> {
         let line_pos = self.line_pos();
         let mut decls = Vec::new();
 
@@ -682,8 +709,12 @@ impl<'src> Parser<'src> {
 
         assert_eq!(self.next(), None);
 
-        if !self.errors.is_empty() {
-            Err(&self.errors)
+        if !self.errors.is_empty() || !self.resolver_errors.borrow().is_empty() {
+            let resolver_errors =
+                mem::replace(&mut self.resolver_errors, Vec::new().into()).into_inner();
+
+            self.errors.extend(resolver_errors);
+            Err(self.errors)
         } else {
             Ok(Program(BlockInner { decls }.into_ast(line_pos)))
         }
@@ -709,25 +740,25 @@ impl<'src> Parser<'src> {
                 Ok(StmtKind::Print(expr).into_ast(line_pos))
             }
             Some(Token::Keyword(Keyword::Return)) => {
-                let idx_at_return = self.pos() - 1;
+                let idx_at_return = self.idx.get() - 1;
                 // returnStmt     → "return" expression? ";" ;
-                if self.fn_count == 0 {
-                    self.prev().unwrap();
-                    return self.err(ErrorKind::DuplicateVariable);
+                if !self
+                    .declaring
+                    .borrow()
+                    .iter()
+                    .any(|d| matches!(d, Declaring::Fun { .. }))
+                {
+                    self.add_resolver_error(ErrorKind::InvalidReturn);
                 }
 
                 let expr = self.parse_expr().ok();
-                self.expect_after(Token::Semicolon, "return value")?;
                 if expr.is_some()
-                    && self
-                        .declaring
-                        .borrow()
-                        .iter()
-                        .any(|d| *d == Declaring::InitMethod)
+                    && self.declaring.borrow().last() == Some(&Declaring::Fun { is_init: true })
                 {
-                    self.idx.set(idx_at_return);
-                    return self.err(ErrorKind::CannotReturnFromInit);
+                    self.add_resolver_error_with_idx(ErrorKind::CantReturnFromInit, idx_at_return);
                 }
+
+                self.expect_after(Token::Semicolon, "return value")?;
 
                 Ok(StmtKind::Return(expr).into_ast(line_pos))
             }
@@ -745,9 +776,7 @@ impl<'src> Parser<'src> {
     /// exprStmt       → expression ";" ;
     fn parse_expr_stmt(&self) -> Result<'src, Expr<'src>> {
         let expr = self.parse_expr()?;
-        if self.force_ending_semicolon {
-            self.expect_after(Token::Semicolon, "expression")?;
-        }
+        self.expect_after(Token::Semicolon, "expression")?;
 
         Ok(expr)
     }
@@ -777,7 +806,11 @@ impl<'src> Parser<'src> {
                 (Err(e), _) => return Err(e),
             };
 
-            let after_iter = s.parse_expr().ok();
+            let after_iter = match (s.peek(), s.parse_expr()) {
+                (Some(Token::RightParen), _) => None,
+                (_, e) => Some(e?),
+            };
+
             s.expect_after(Token::RightParen, "for clauses")?;
 
             let body = s.parse_stmt()?.into();
@@ -885,6 +918,7 @@ impl<'src> Parser<'src> {
     /// declaration    → classDecl | funDecl | varDecl | statement;
     fn parse_decl(&mut self) -> Option<Decl<'src>> {
         let line_pos = self.line_pos();
+        let declaring_before_decl = self.declaring.borrow().clone();
         let maybe_decl = match self.next() {
             Some(Token::Keyword(Keyword::Class)) => self.parse_class_decl(),
             Some(Token::Keyword(Keyword::Fun)) => self
@@ -901,7 +935,7 @@ impl<'src> Parser<'src> {
             }
         };
 
-        match maybe_decl {
+        let res = match maybe_decl {
             Ok(decl) => Some(decl),
             Err(e) => {
                 self.errors.push(e);
@@ -909,32 +943,36 @@ impl<'src> Parser<'src> {
                 self.recover();
                 None
             }
-        }
+        };
+
+        self.declaring.replace(declaring_before_decl);
+
+        res
     }
 
     /// "class" IDENTIFIER ( "<" IDENTIFIER )?
     ///     "{" function* "}" ;
     fn parse_class_decl(&mut self) -> Result<'src, Decl<'src>> {
         let line_pos = self.line_pos();
-        let Some(Token::Identifier(name)) = self.next() else {
-            return self.custom_err("class name");
-        };
+        let name = self.parse_ident("class name")?;
 
         let mut spr = None;
         if let Some(Token::Less) = self.peek() {
             self.next().unwrap();
             spr = match self.next() {
                 Some(Token::Identifier(i)) => Some(i),
-                _ => return self.custom_err("superclass name"),
+                _ => {
+                    self.prev().unwrap();
+                    return self.custom_err("superclass name");
+                }
             };
         }
 
         if spr.map(|p| p == name).unwrap_or(false) {
-            self.prev().unwrap();
-            return self.err(ErrorKind::CantInherintFromItself);
+            self.add_resolver_error(ErrorKind::CantInherintFromItself);
         }
 
-        self.expect_custom(Token::LeftBrace, "before class body")?;
+        self.expect_before(Token::LeftBrace, "class body")?;
 
         let mut methods = Vec::new();
         self.declaring.borrow_mut().push(Declaring::Class {
@@ -968,15 +1006,14 @@ impl<'src> Parser<'src> {
         while let Some(Token::Comma) = self.peek() {
             self.next().unwrap();
 
-            let Some(Token::Identifier(p)) = self.next() else {
-                return self.custom_err("parameter name");
-            };
-
+            let p = self.parse_ident("parameter name")?;
             if lookup.contains(&p) {
-                self.prev().unwrap();
-                return self.err(ErrorKind::DuplicateVariable);
+                self.add_resolver_error(ErrorKind::DuplicateVariable);
             }
-
+            if params.len() == MAX_PARAM_COUNT {
+                self.prev().unwrap();
+                return self.err(ErrorKind::TooManyParameters);
+            };
             params.push(p);
             lookup.insert(p);
         }
@@ -987,40 +1024,38 @@ impl<'src> Parser<'src> {
     /// funDecl        → "fun" function ;
     /// function       → IDENTIFIER "(" parameters? ")" block ;
     fn parse_fun_decl(&mut self, ty: FnType) -> Result<'src, FunDecl<'src>> {
-        let Some(Token::Identifier(name)) = self.next() else {
-            let name = match ty {
+        let name = self.parse_ident(format!(
+            "{} name",
+            match ty {
                 FnType::Method => "method",
                 FnType::Fn => "function",
-            };
-            return self.custom_err(format!("{name} name"));
-        };
+            }
+        ))?;
 
         self.expect_after(Token::LeftParen, "function name")?;
 
         let params = self.parse_parameters()?;
 
         self.expect_after(Token::RightParen, "parameters")?;
-        self.expect_custom(Token::LeftBrace, "before function body")?;
-        self.fn_count += 1;
-        let is_init_method = ty == FnType::Method && name == CONSTRUCTOR_FN_NAME;
-        if is_init_method {
-            self.declaring.borrow_mut().push(Declaring::InitMethod);
-        };
+        self.expect_before(Token::LeftBrace, "function body")?;
+
+        let is_init = ty == FnType::Method
+            && name == CONSTRUCTOR_FN_NAME
+            && matches!(
+                self.declaring.borrow().last(),
+                Some(&Declaring::Class { .. })
+            );
+
+        self.declaring.borrow_mut().push(Declaring::Fun { is_init });
 
         let body = match self.parse_block(Some(HashSet::from_iter(params.iter().copied()))) {
             Ok(o) => o,
             Err(e) => {
-                if is_init_method {
-                    self.declaring.borrow_mut().pop().unwrap();
-                }
                 return Err(e);
             }
         };
-        self.fn_count -= 1;
 
-        if is_init_method {
-            self.declaring.borrow_mut().pop().unwrap();
-        }
+        self.declaring.borrow_mut().pop().unwrap();
 
         self.defined_vars_in_scope.insert(name);
 
@@ -1031,38 +1066,24 @@ impl<'src> Parser<'src> {
 
     /// varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
     fn parse_var_decl(&mut self) -> Result<'src, VarDecl<'src>> {
-        let Some(Token::Identifier(name)) = self.next() else {
-            return self.custom_err("variable name");
-        };
+        let name = self.parse_ident("variable name")?;
+
+        if self.defined_vars_in_scope.contains(name) && !self.is_global_scope {
+            self.add_resolver_error(ErrorKind::DuplicateVariable);
+        }
 
         self.declaring.borrow_mut().push(Declaring::Var(name));
 
         let var_decl = match self.next() {
             Some(Token::Equal) => {
-                let value = self.parse_expr()?;
-
-                if self.defined_vars_in_scope.contains(name) && !self.is_global_scope {
-                    self.prev().unwrap();
-                    return self.err(ErrorKind::DuplicateVariable);
-                }
+                let value = self.parse_expr()?.into();
 
                 self.expect_after(Token::Semicolon, "variable declaration")?;
 
-                let value = value.into();
-
                 VarDecl { name, value }
             }
-            Some(Token::Semicolon) => {
-                if self.defined_vars_in_scope.contains(name) {
-                    self.prev().unwrap();
-                    return self.err(ErrorKind::DuplicateVariable);
-                }
-
-                VarDecl { name, value: None }
-            }
+            Some(Token::Semicolon) => VarDecl { name, value: None },
             _ => {
-                self.declaring.borrow_mut().pop().unwrap();
-
                 return self.err(ErrorKind::TokenAfter(
                     Token::Semicolon,
                     "variable declaration",
@@ -1083,6 +1104,7 @@ impl<'src> Parser<'src> {
         let or_or_setter = self.parse_logic_or()?;
 
         if self.accept(Token::Equal).is_some() {
+            let assign_idx = self.idx.get() - 1;
             let val = self.parse_expr()?.into();
             let assignment = match or_or_setter.kind {
                 ExprKind::Ident(ident) => ExprKind::Assign {
@@ -1095,7 +1117,10 @@ impl<'src> Parser<'src> {
                     ident,
                     val,
                 },
-                _ => return self.err(ErrorKind::InvalidAssignmentTarget),
+                _ => {
+                    self.idx.set(assign_idx);
+                    return self.err(ErrorKind::InvalidAssignmentTarget);
+                }
             };
 
             Ok(assignment.into_ast(self.line_pos()))
@@ -1243,6 +1268,10 @@ impl<'src> Parser<'src> {
         while let Some(Token::Comma) = self.peek() {
             self.next().unwrap();
 
+            if args.len() == MAX_PARAM_COUNT {
+                return self.err(ErrorKind::TooManyArgs);
+            }
+
             args.push(self.parse_expr()?);
         }
 
@@ -1257,9 +1286,7 @@ impl<'src> Parser<'src> {
         while let Some(next) = self.accept(Token::LeftParen).or(self.accept(Token::Dot)) {
             let next = match next {
                 Token::Dot => {
-                    let Some(Token::Identifier(ident)) = self.next() else {
-                        return self.custom_err("property name after '.'");
-                    };
+                    let ident = self.parse_ident("property name after '.'")?;
 
                     ExprKind::Access(call.into(), ident)
                 }
@@ -1304,17 +1331,16 @@ impl<'src> Parser<'src> {
             Some(Token::Keyword(Keyword::False)) => Primary::Bool(false),
             Some(Token::Keyword(Keyword::Nil)) => Primary::Nil,
             Some(Token::Keyword(Keyword::This)) => {
-                if self
+                if !self
                     .declaring
                     .borrow()
                     .iter()
                     .any(|d| matches!(d, Declaring::Class { .. }))
                 {
-                    return Ok(ExprKind::This.into_ast(line_pos));
-                } else {
-                    self.prev().unwrap();
-                    return self.err(ErrorKind::CannotUseThisOutsideOfClass);
+                    self.add_resolver_error(ErrorKind::CantUseThisOutsideOfClass);
                 }
+
+                return Ok(ExprKind::This.into_ast(line_pos));
             }
             Some(Token::Keyword(Keyword::Super)) => {
                 let declaring = self.declaring.borrow();
@@ -1323,23 +1349,23 @@ impl<'src> Parser<'src> {
                     .find(|d| matches!(d, Declaring::Class { .. }));
 
                 match declaring_class {
-                    Some(Declaring::Class { has_super: true }) => {
-                        self.expect_after_token(Token::Dot)?;
-                        let Some(Token::Identifier(method)) = self.next() else {
-                            return self.custom_err("superclass method name");
-                        };
-
-                        return Ok(ExprKind::Super(method).into_ast(line_pos));
-                    }
+                    Some(Declaring::Class { has_super: true }) => {}
                     Some(Declaring::Class { .. }) => {
-                        return self.err(ErrorKind::InvalidSuperUsage { inside_class: true })
+                        self.add_resolver_error(ErrorKind::InvalidSuperUsage {
+                            inside_class: true,
+                        });
                     }
                     _ => {
-                        return self.err(ErrorKind::InvalidSuperUsage {
+                        self.add_resolver_error(ErrorKind::InvalidSuperUsage {
                             inside_class: false,
-                        })
+                        });
                     }
                 }
+
+                self.expect_after_token(Token::Dot)?;
+                let method = self.parse_ident("superclass method name")?;
+
+                return Ok(ExprKind::Super(method).into_ast(line_pos));
             }
             Some(Token::Identifier(i)) => {
                 let curr_defining_this_var = self
@@ -1349,8 +1375,7 @@ impl<'src> Parser<'src> {
                     .any(|d| matches!(d, Declaring::Var(decl_i) if *decl_i == i));
 
                 if !self.defined_vars_in_scope.contains(i) && curr_defining_this_var {
-                    self.prev().unwrap();
-                    return self.err(ErrorKind::CantReadLocalVarInOwnInit);
+                    self.add_resolver_error(ErrorKind::CantReadLocalVarInOwnInit);
                 }
                 return Ok(ExprKind::Ident(i).into_ast(line_pos));
             }

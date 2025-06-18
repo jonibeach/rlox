@@ -1,4 +1,4 @@
-use codecrafters_interpreter::lexer::{Error, Keyword, Lexer, Token};
+use rlox::lexer::{Error, Keyword, Lexer, Token};
 
 #[test]
 fn whitespace() {

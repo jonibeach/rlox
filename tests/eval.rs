@@ -1,4 +1,4 @@
-use codecrafters_interpreter::{
+use rlox::{
     eval::{ErrorKind, Executor},
     lexer::{Keyword, Lexer, Token},
     parser::Parser,
@@ -13,7 +13,7 @@ macro_rules! assert_program_stdout {
 
         assert_eq!(lexer.errors(), [].as_slice());
 
-        let mut parser = Parser::new(lexer.tokens());
+        let parser = Parser::new(lexer.tokens());
         let program = parser.parse().unwrap();
         let mut stdout: Vec<u8> = Vec::new();
         let executor = Executor::new(program.decls(), &mut stdout);
@@ -41,7 +41,7 @@ fn bool() {
         vec![Token::Keyword(Keyword::True), Token::Semicolon]
     );
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
 
     assert_eq!(
@@ -60,7 +60,7 @@ fn nil() {
     let src = "nil;";
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -74,7 +74,7 @@ fn unarys() {
     let src = "(!nil) == true;";
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -88,7 +88,7 @@ fn numbers() {
     let src = "1+2*45;";
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -102,7 +102,7 @@ fn neg_number() {
     let src = "-2;";
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -116,7 +116,7 @@ fn neg_numbers_2() {
     let src = "1-2*45;";
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -130,7 +130,7 @@ fn string_concat() {
     let src = "\"hello\"+\"hello\";";
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -144,7 +144,7 @@ fn string_concat_groups() {
     let src = "(\"quz\" + \"baz\") + (\"quz\" + \"bar\");";
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let res = executor.eval().unwrap();
@@ -158,7 +158,7 @@ fn unary_expected_num() {
     let src = r#"-"test";"#;
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let err = executor.eval().unwrap_err();
@@ -173,7 +173,7 @@ fn expect_both_nums_or_strings() {
         "test" + 123.44;"#;
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let err = executor.eval().unwrap_err();
@@ -314,10 +314,8 @@ fn clock() {
 
     assert_eq!(lexer.errors(), [].as_slice());
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
-
-    eprintln!("PROGRAM: {program:?}");
 
     let mut stdout: Vec<u8> = Vec::new();
     let executor = Executor::new(program.decls(), &mut stdout);
@@ -866,7 +864,7 @@ fn this_undefined_property() {
 
     lexer.lex(src);
 
-    let mut parser = Parser::new(lexer.tokens());
+    let parser = Parser::new(lexer.tokens());
     let program = parser.parse().unwrap();
     let executor = Executor::with_stdout(program.decls());
     let err = executor.run().unwrap_err();

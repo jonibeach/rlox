@@ -1,6 +1,6 @@
 [package]
-name = "codecrafters-interpreter"
+name = "rlox"
 version = "0.1.0"
-authors = ["Codecrafters <hello@codecrafters.io>"]
-edition = "2021"
-rust-version = "1.80"
+authors = ["jonibeach <joni.t.ranta@gmail.com>"]
+edition = "2024"
+rust-version = "1.85"

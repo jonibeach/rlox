@@ -138,9 +138,22 @@ impl<'src> Lexer<'src> {
                                 break None;
                             }
                             _ => {
-                                let float_str_repr = &src[start_idx..end_idx];
+                                let mut float_str_repr = &src[start_idx..end_idx];
+                                let has_trailing_dot = float_str_repr.chars().last() == Some('.');
+
+                                if has_trailing_dot {
+                                    float_str_repr = &float_str_repr[0..float_str_repr.len() - 1];
+                                }
+
                                 let float = float_str_repr.parse().unwrap();
-                                break Some(Token::Number(float, float_str_repr));
+                                let token = Token::Number(float, float_str_repr);
+
+                                break if has_trailing_dot {
+                                    self.tokens.push(Symbol::new(line, pos, token));
+                                    Some(Token::Dot)
+                                } else {
+                                    Some(token)
+                                };
                             }
                         }
                     }
@@ -219,14 +232,15 @@ impl<T: Copy> Symbol<T> {
 impl Display for Symbol<Error> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let differing_part = match self.inner {
-            Error::UnexpectedCharacter(c) => {
-                format!("Unexpected character: {}", c)
+            Error::UnexpectedCharacter(_c) => {
+                // format!("Unexpected character: {}", c)
+                "Unexpected character"
             }
-            Error::UnterminatedString => String::from("Unterminated string."),
+            Error::UnterminatedString => "Unterminated string",
         };
 
         f.write_fmt(format_args!(
-            "[line {}] Error: {differing_part}",
+            "[line {}] Error: {differing_part}.",
             self.line + 1
         ))
     }

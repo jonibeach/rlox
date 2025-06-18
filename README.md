@@ -1,51 +1,35 @@
-[![progress-banner](https://backend.codecrafters.io/progress/interpreter/cfb50ae5-5339-4b4a-9395-633f4591bbb8)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# Rlox
 
-This is a starting point for Rust solutions to the
-["Build your own Interpreter" Challenge](https://app.codecrafters.io/courses/interpreter/overview).
+A tree-walking [Lox](https://github.com/munificent/craftinginterpreters) interpreter written in rust.
 
-This challenge follows the book
-[Crafting Interpreters](https://craftinginterpreters.com/) by Robert Nystrom.
+Built based on the [Codecrafters challenge](https://app.codecrafters.io/courses/interpreter/overview) and the [Crafting Interpreters book](https://craftinginterpreters.com/contents.html).
 
-In this challenge you'll build an interpreter for
-[Lox](https://craftinginterpreters.com/the-lox-language.html), a simple
-scripting language. Along the way, you'll learn about tokenization, ASTs,
-tree-walk interpreters and more.
+## Testing
 
-Before starting this challenge, make sure you've read the "Welcome" part of the
-book that contains these chapters:
+Rlox has been tested to pass the jlox test suite provided in the Crafting Interpreters repository.
 
-- [Introduction](https://craftinginterpreters.com/introduction.html) (chapter 1)
-- [A Map of the Territory](https://craftinginterpreters.com/a-map-of-the-territory.html)
-  (chapter 2)
-- [The Lox Language](https://craftinginterpreters.com/the-lox-language.html)
-  (chapter 3)
-
-These chapters don't involve writing code, so they won't be covered in this
-challenge. This challenge will start from chapter 4,
-[Scanning](https://craftinginterpreters.com/scanning.html).
-
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
-
-# Passing the first stage
-
-The entry point for your program is in `src/main.rs`. Study and uncomment the
-relevant code, and push your changes to pass the first stage:
+### Running the test suite 
 
 ```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+
+# Build the interpreter
+$ cargo build --release
+
+# The official Crafting Interpreters repository is a submodule
+$ cd craftinginterpreters
+
+# Install the dart SDK
+$ brew install dart@2.19
+$ dart --version 
+Dart SDK version: 2.19.6 (stable) (Tue Mar 28 13:41:04 2023 +0000) on "macos_arm64"
+
+# Install the dart depencies
+$ dart pub install
+
+# Run the test suite. The behaviour of rlox matches jlox.
+$ dart tool/bin/test.dart jlox --interpreter ../target/release/rlox
+All 239 tests passed (556 expectations).
+
 ```
 
-Time to move on to the next stage!
 
-# Stage 2 & beyond
-
-Note: This section is for stages 2 and beyond.
-
-1. Ensure you have `cargo (1.85)` installed locally
-2. Run `./your_program.sh` to run your program, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-3. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.

@@ -1,19 +1,14 @@
 use std::env;
 use std::fs;
 
-use codecrafters_interpreter::eval::Executor;
-use codecrafters_interpreter::lexer::Lexer;
-use codecrafters_interpreter::parser::Parser;
+use rlox::eval::Executor;
+use rlox::lexer::Lexer;
+use rlox::parser::Parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("Usage: {} tokenize <filename>", args[0]);
-        return;
-    }
 
-    let command = &args[1];
-    let filename = &args[2];
+    let filename = args.get(1).expect("Usage: rlox <filename>");
 
     let file_contents = fs::read_to_string(filename).unwrap_or_else(|_| {
         eprintln!("Failed to read file {}", filename);
@@ -28,70 +23,32 @@ fn main() {
         eprintln!("{err}")
     }
 
-    match command.as_str() {
-        "tokenize" => {
-            for token in lexer.tokens() {
-                println!("{token}");
-            }
+    // For some reason jlox only exits on unterminated strings
+    if lexer
+        .errors()
+        .iter()
+        .any(|e| e.token() == rlox::lexer::Error::UnterminatedString)
+    {
+        std::process::exit(65)
+    }
 
-            println!("EOF  null");
-
-            if !lexer.errors().is_empty() {
-                std::process::exit(65)
+    let parser = Parser::new(lexer.tokens());
+    let program = match parser.parse() {
+        Ok(program) => program,
+        Err(errors) => {
+            for err in errors {
+                eprintln!("{err}")
             }
-        }
-        "parse" => {
-            if !lexer.errors().is_empty() {
-                std::process::exit(65)
-            }
-            let mut parser = Parser::no_ending_semicolons(lexer.tokens());
-            let program = match parser.parse() {
-                Ok(ast) => ast,
-                Err(..) => std::process::exit(65),
-            };
-            for stmt in program.decls() {
-                println!("{stmt}");
-            }
-        }
-        "evaluate" => {
-            if !lexer.errors().is_empty() {
-                std::process::exit(65)
-            }
-            let mut parser = Parser::no_ending_semicolons(lexer.tokens());
-            let program = match parser.parse() {
-                Ok(program) => program,
-                Err(..) => std::process::exit(65),
-            };
-            let executor = Executor::with_stdout(program.decls());
-            let res = executor.eval();
-            match res {
-                Ok(res) => println!("{}", res),
-                Err(e) => {
-                    eprintln!("{e}");
-                    std::process::exit(70)
-                }
-            };
-        }
-        "run" => {
-            if !lexer.errors().is_empty() {
-                std::process::exit(65)
-            }
-            let mut parser = Parser::new(lexer.tokens());
-            let program = match parser.parse() {
-                Ok(program) => program,
-                Err(..) => std::process::exit(65),
-            };
-            let executor = Executor::with_stdout(program.decls());
-            match executor.run() {
-                Ok(..) => {}
-                Err(e) => {
-                    eprintln!("{e}");
-                    std::process::exit(70)
-                }
-            }
-        }
-        _ => {
-            eprintln!("Unknown command: {}", command);
+            std::process::exit(65)
         }
     };
+
+    let executor = Executor::with_stdout(program.decls());
+    match executor.run() {
+        Ok(..) => {}
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(70)
+        }
+    }
 }

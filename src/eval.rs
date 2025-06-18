@@ -8,8 +8,8 @@ use std::{
 };
 
 use crate::parser::{
-    AstNode, CmpOp, Decl, DeclKind, EqOp, Expr, ExprKind, FactorOp, ForBegin, FunDecl, Primary,
-    Stmt, StmtKind, TermOp, UnaryOp, VarDecl, CONSTRUCTOR_FN_NAME,
+    AstNode, CONSTRUCTOR_FN_NAME, CmpOp, Decl, DeclKind, EqOp, Expr, ExprKind, FactorOp, ForBegin,
+    FunDecl, Primary, Stmt, StmtKind, TermOp, UnaryOp, VarDecl,
 };
 
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub enum ErrorKind<'src> {
     BothMustBeNumbersOrStrings,
     UndefinedVariable(&'src str),
     UndefinedProperty(&'src str),
-    OnlyClassesHaveProperties,
+    OnlyInstancesHave(&'static str),
     NotCallable,
     IncorrectArgCount { got: usize, expected: usize },
     SuperClassMustBeAClass,
@@ -50,28 +50,30 @@ impl<'src> Error<'src> {
 impl Display for Error<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self.kind {
-            ErrorKind::MustBeNumber => "Operand must be a number.".into(),
-            ErrorKind::BothMustBeNumbers => "Operands must be numbers.".into(),
+            ErrorKind::MustBeNumber => "Operand must be a number".into(),
+            ErrorKind::BothMustBeNumbers => "Operands must be numbers".into(),
             ErrorKind::BothMustBeNumbersOrStrings => {
-                "Operands must be two numbers or two strings.".into()
+                "Operands must be two numbers or two strings".into()
             }
             ErrorKind::UndefinedVariable(ident) => {
-                format!("Undefined variable '{ident}'.")
+                format!("Undefined variable '{ident}'")
             }
             ErrorKind::UndefinedProperty(p) => {
-                format!("Undefined property '{p}'.")
+                format!("Undefined property '{p}'")
             }
-            ErrorKind::OnlyClassesHaveProperties => "Only classes have properties".into(),
+            ErrorKind::OnlyInstancesHave(prop_or_field) => {
+                format!("Only instances have {prop_or_field}")
+            }
             ErrorKind::NotCallable => "Can only call functions and classes".into(),
             ErrorKind::IncorrectArgCount { got, expected } => {
-                format!("Expected {expected} arguments but got {got}.")
+                format!("Expected {expected} arguments but got {got}")
             }
             ErrorKind::SuperClassMustBeAClass => "Superclass must be a class".into(),
             ErrorKind::Io(..) => "IO error".into(),
             ErrorKind::Return(ref r) => format!("Return {}", r.borrow()),
         };
 
-        writeln!(f, "{msg}")?;
+        writeln!(f, "{msg}.")?;
         write!(f, "[line {}]", self.line + 1)
     }
 }
@@ -124,20 +126,12 @@ impl<'src> Value<'src> {
         match self {
             Self::NativeFunction(f) => Ok(Rc::new(f().into())),
             Self::Function(FnVal {
-                def:
-                    FunDef {
-                        pos,
-                        params,
-                        body,
-                        name,
-                    },
+                def: FunDef {
+                    pos, params, body, ..
+                },
                 env,
                 is_constructor,
             }) => {
-                eprintln!(
-                    "CALLING {name} SPR {:?}",
-                    env.borrow().spr.as_ref().map(|spr| spr.name)
-                );
                 let got = args.len();
                 let expected = params.len();
                 if got != expected {
@@ -160,19 +154,17 @@ impl<'src> Value<'src> {
                 }
 
                 let ret = match executor.eval_decls(body) {
-                    Ok(..) => {
-                        if *is_constructor {
-                            executor.environment.borrow().resolve_this()
-                        } else {
-                            Rc::new(Value::Primary(Primary::Nil).into())
-                        }
-                    }
+                    Ok(..) => Rc::new(Value::Primary(Primary::Nil).into()),
                     Err(Error {
                         kind: ErrorKind::Return(ret),
                         ..
                     }) => ret,
                     Err(e) => return Err(e),
                 };
+
+                if *is_constructor {
+                    return Ok(executor.environment.borrow().resolve_this());
+                }
 
                 Ok(ret)
             }
@@ -239,9 +231,14 @@ impl<'src> Value<'src> {
                     .map(|(_, val)| val)
                     .ok_or_else(|| executor.err_inner(ErrorKind::UndefinedProperty(key)))?;
 
-                Ok(Rc::clone(val))
+                let val = match &*val.borrow() {
+                    Value::Function(..) => Rc::new(val.borrow().clone().into()),
+                    _ => Rc::clone(val),
+                };
+
+                Ok(val)
             }
-            _ => executor.err(ErrorKind::OnlyClassesHaveProperties),
+            _ => executor.err(ErrorKind::OnlyInstancesHave("properties")),
         }
     }
 
@@ -257,7 +254,7 @@ impl<'src> Value<'src> {
 
                 Ok(())
             }
-            _ => executor.err(ErrorKind::OnlyClassesHaveProperties),
+            _ => executor.err(ErrorKind::OnlyInstancesHave("fields")),
         }
     }
 
@@ -350,18 +347,10 @@ impl<'src> Environment<'src> {
         method: &'src str,
     ) -> Result<'src, Rc<RefCell<Value<'src>>>> {
         if let Some(spr) = &self.spr {
-            eprintln!(
-                "HAS SPR {} {:?} GETTING {}",
-                spr.name,
-                spr.methods.keys().collect::<Vec<_>>(),
-                method
-            );
             if let Some(method) = spr.methods.get(method) {
-                eprintln!(
-                    "SPR METHOD HAS SPR: {:?}",
-                    method.env.borrow().spr.as_ref().map(|p| p.name)
-                );
-                return Ok(Rc::new(Value::Function(method.clone()).into()));
+                let method = method.clone();
+                method.env.borrow_mut().this = Some(self.resolve_this());
+                return Ok(Rc::new(Value::Function(method).into()));
             }
 
             return executor.err(ErrorKind::UndefinedProperty(method));
@@ -542,10 +531,19 @@ impl<'src, T: Write> Executor<'src, T> {
             }
             DeclKind::Var(v) => self.eval_var_decl(v)?,
             DeclKind::Fun(decl) => {
+                let is_global = self.environment.borrow().parent.is_none();
                 self.environment.borrow_mut().definitions.insert(
                     decl.name,
                     (
-                        self.pos.get(),
+                        // Allow functions in the global scope to be accessed anywhere, if the fun
+                        // has been defined
+                        if is_global {
+                            0
+                        } else {
+                            // Otherwise treat function as regular variableOtherwise treat function
+                            // as regular variable
+                            self.pos.get()
+                        },
                         Rc::new(Value::Function(self.get_fun_value(decl)).into()),
                     ),
                 );
@@ -580,12 +578,6 @@ impl<'src, T: Write> Executor<'src, T> {
                     .map(|decl| {
                         let val = self.get_fun_value(decl);
 
-                        eprintln!(
-                            "SETTING FN {} ON CLASS {name} TO HAVE SPR {:?}",
-                            decl.name,
-                            spr.as_ref().map(|p| p.name)
-                        );
-
                         val.env.borrow_mut().spr = spr.as_ref().map(Rc::clone);
 
                         (decl.name, val)
@@ -600,12 +592,6 @@ impl<'src, T: Write> Executor<'src, T> {
                         if methods.contains_key(method_name) {
                             continue;
                         }
-
-                        eprintln!("ADDING METHOD {} FROM {} TO {}", method_name, c.name, name);
-                        eprintln!(
-                            "ADDED METHOD HAS SPR {:?}",
-                            val.env.borrow().spr.as_ref().map(|s| s.name)
-                        );
 
                         methods.insert(method_name, val.clone());
                     }
@@ -747,27 +733,38 @@ impl<'src, T: Write> Executor<'src, T> {
                 if a.borrow().truthiness() {
                     self.eval_expr(b)?
                 } else {
-                    Rc::new(RefCell::new(Primary::Bool(false).into()))
+                    a
                 }
             }
             ExprKind::Eq(a, op, b) => {
                 let a = self.eval_expr(a)?;
                 let b = self.eval_expr(b)?;
-                let a = a.borrow();
-                let b = b.borrow();
-                let res = match (&*a, &*b) {
-                    (Value::Primary(a), Value::Primary(b)) => match op {
-                        EqOp::Eq => a == b,
-                        EqOp::Neq => a != b,
-                    },
-                    _ => false,
+
+                let res = {
+                    let a = a.borrow();
+                    let b = b.borrow();
+
+                    match (&*a, &*b) {
+                        (Value::Primary(a), Value::Primary(b)) => match op {
+                            EqOp::Eq => a == b,
+                            EqOp::Neq => a != b,
+                        },
+                        _ => false,
+                    }
                 };
+
+                let res = res || a.as_ptr() == b.as_ptr();
 
                 Rc::new(RefCell::new(Primary::Bool(res).into()))
             }
             ExprKind::Cmp(a, op, b) => {
-                let a = self.eval_expr(a)?.borrow().as_num(self)?;
-                let b = self.eval_expr(b)?.borrow().as_num(self)?;
+                let (Ok(a), Ok(b)) = (
+                    self.eval_expr(a)?.borrow().as_num(self),
+                    self.eval_expr(b)?.borrow().as_num(self),
+                ) else {
+                    return self.err(ErrorKind::BothMustBeNumbers);
+                };
+
                 let res = match op {
                     CmpOp::Gte => a >= b,
                     CmpOp::Gt => a > b,
@@ -804,8 +801,13 @@ impl<'src, T: Write> Executor<'src, T> {
                 Rc::new(RefCell::new(res.into()))
             }
             ExprKind::Factor(a, op, b) => {
-                let a = self.eval_expr(a)?.borrow().as_num(self)?;
-                let b = self.eval_expr(b)?.borrow().as_num(self)?;
+                let (Ok(a), Ok(b)) = (
+                    self.eval_expr(a)?.borrow().as_num(self),
+                    self.eval_expr(b)?.borrow().as_num(self),
+                ) else {
+                    return self.err(ErrorKind::BothMustBeNumbers);
+                };
+
                 let res = match op {
                     FactorOp::Div => a / b,
                     FactorOp::Mul => a * b,
@@ -834,8 +836,8 @@ impl<'src, T: Write> Executor<'src, T> {
 
                 // Pass classes by reference and everything else by value
                 let val = match &*val.borrow() {
-                    Value::ClassInstance { .. } => Rc::clone(&val),
-                    other => Rc::new(other.clone().into()),
+                    Value::Primary(..) => Rc::new(val.borrow().clone().into()),
+                    __ => Rc::clone(&val),
                 };
 
                 val
