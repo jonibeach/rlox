@@ -203,7 +203,7 @@ impl<'src> Value<'src> {
 
                 if let Some(constructor) = constructor {
                     constructor.borrow().call(args, executor)?;
-                } else if args.len() != 0 {
+                } else if !args.is_empty() {
                     return executor.err(ErrorKind::IncorrectArgCount {
                         got: args.len(),
                         expected: 0,
@@ -837,7 +837,7 @@ impl<'src, T: Write> Executor<'src, T> {
                 // Pass classes by reference and everything else by value
                 let val = match &*val.borrow() {
                     Value::Primary(..) => Rc::new(val.borrow().clone().into()),
-                    __ => Rc::clone(&val),
+                    _ => Rc::clone(&val),
                 };
 
                 val

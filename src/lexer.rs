@@ -139,7 +139,7 @@ impl<'src> Lexer<'src> {
                             }
                             _ => {
                                 let mut float_str_repr = &src[start_idx..end_idx];
-                                let has_trailing_dot = float_str_repr.chars().last() == Some('.');
+                                let has_trailing_dot = float_str_repr.ends_with('.');
 
                                 if has_trailing_dot {
                                     float_str_repr = &float_str_repr[0..float_str_repr.len() - 1];
